@@ -1,0 +1,22 @@
+<h2>Kategorie wiekowe</h2>
+{% if not competition.age_categories %}
+    <div class="card">Brak kategorii wiekowych. Dodaj dokumenty lub utwórz kategorię ręcznie.</div>
+{% endif %}
+<ul class="list">
+    {% for ac in competition.age_categories %}
+    <li>
+        <div class="row-main" onclick="document.location='/age-categories/{{ ac.id }}'">
+            <strong>{{ ac.name or ('Kategoria #' ~ ac.id) }}</strong>
+            <div class="muted">{{ ac.weight_categories|length }} kat. wagowych</div>
+        </div>
+        <div class="row-actions">
+            {% if rights.can_delete %}
+            <form method="post" action="/age-categories/{{ ac.id }}/delete"
+                  data-confirm="Usunąć kategorię „{{ ac.name }}”?">
+                <button class="danger" type="submit">Usuń</button>
+            </form>
+            {% endif %}
+        </div>
+    </li>
+    {% endfor %}
+</ul>

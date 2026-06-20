@@ -1,0 +1,22 @@
+<p class="muted">Przeciągnij wiersze, aby zmienić kolejność, a następnie zapisz.</p>
+<form method="post" action="/weight-categories/{{ weight.id }}/order">
+<input type="hidden" name="order" id="order-field">
+<table>
+    <thead>
+        <tr><th>Number</th><th>Name and Surname</th><th>Year of Birth</th><th>Team</th><th>Other Information</th></tr>
+    </thead>
+    <tbody id="draw-body">
+        {% for p in participants %}
+        <tr data-pid="{{ p.id }}" class="draw-row">
+            <td class="center draw-number">{{ loop.index }}</td>
+            <td>{{ p.name }}</td>
+            <td>{{ p.birth_year or '' }}</td>
+            <td>{{ p.team or '' }}</td>
+            <td>{{ p.other_info or '' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+<div class="export-bar"><button type="submit">Zapisz kolejność</button></div>
+</form>
+<script>initSortable('draw-body', 'order-field');</script>

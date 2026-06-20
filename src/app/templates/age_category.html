@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}{{ age.name }} — {{ competition.name }}{% endblock %}
+{% block nav %}
+<div class="topbar">
+    <a class="brand" href="/competitions">🥋 System SUMO</a>
+    <div class="actions">
+        <span>{{ user.login }}</span>
+        <a class="btn secondary" href="/logout">Wyloguj</a>
+    </div>
+</div>
+{% endblock %}
+{% block content %}
+<div class="breadcrumb">
+    <a href="/competitions">Zawody</a> /
+    <a href="/competitions/{{ competition.id }}">{{ competition.name }}</a> /
+    {{ age.name }}
+</div>
+<h1>Kategoria wiekowa: {{ age.name }}</h1>
+
+{% if rights.can_create %}
+<div class="export-bar">
+    <button onclick="openModal('weight-modal')">+ Dodaj kategorię wagową</button>
+</div>
+{% endif %}
+
+<h2>Kategorie wagowe</h2>
+{% if not weight_categories %}
+    <div class="card">Brak kategorii wagowych.</div>
+{% endif %}
+<ul class="list">
+    {% for wc in weight_categories %}
+    <li>
+        <div class="row-main" onclick="document.location='/weight-categories/{{ wc.id }}'">
+            <strong>{{ wc.name or (wc.weight ~ ' kg') }}</strong>
+            <div class="muted">{{ wc.participants|length }} uczestników</div>
+        </div>
+        <div class="row-actions">
+            {% if rights.can_delete %}
+            <form method="post" action="/weight-categories/{{ wc.id }}/delete"
+                  data-confirm="Usunąć kategorię wagową „{{ wc.name }}”?">
+                <button class="danger" type="submit">Usuń</button>
+            </form>
+            {% endif %}
+        </div>
+    </li>
+    {% endfor %}
+</ul>
+
+<div class="modal-backdrop hidden" id="weight-modal">
+    <div class="modal">
+        <h3>Nowa kategoria wagowa</h3>
+        <form method="post" action="/age-categories/{{ age.id }}/weight-categories">
+            <label>Waga (kg)</label><input name="weight" type="number" step="0.1" required>
+            <div class="flex" style="justify-content:flex-end; margin-top:1rem;">
+                <button type="button" class="secondary" onclick="closeModal('weight-modal')">Anuluj</button>
+                <button type="submit">Dodaj (Submit)</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

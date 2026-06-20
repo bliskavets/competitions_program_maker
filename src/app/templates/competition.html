@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}{{ competition.name }} — System SUMO{% endblock %}
+{% block nav %}
+<div class="topbar">
+    <a class="brand" href="/competitions">🥋 System SUMO</a>
+    <div class="actions">
+        <span>{{ user.login }}</span>
+        <a class="btn secondary" href="/logout">Wyloguj</a>
+    </div>
+</div>
+{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/competitions">Zawody</a> / {{ competition.name }}</div>
+<h1>{{ competition.name }}</h1>
+<p class="muted">{{ competition.event_date or '' }} {% if competition.birth_years %}· roczniki {{ competition.birth_years }}{% endif %}</p>
+{% if competition.description %}<p>{{ competition.description }}</p>{% endif %}
+
+<div class="export-bar">
+    {% if rights.can_create or rights.can_update %}
+    <button onclick="openModal('docs-modal')">📄 Dodaj dokumenty</button>
+    {% endif %}
+    {% if rights.can_create %}
+    <button class="secondary" onclick="openModal('age-modal')">+ Kategoria wiekowa</button>
+    {% endif %}
+</div>
+
+<div id="categories-area">
+    {% include "partials/age_category_list.html" %}
+</div>
+
+<!-- documents modal -->
+<div class="modal-backdrop hidden" id="docs-modal">
+    <div class="modal">
+        <h3>Dodaj dokumenty (Excel)</h3>
+        <p class="muted">Można wybrać wiele plików .xlsx. Każdy arkusz = kategoria wiekowa.</p>
+        <form hx-post="/competitions/{{ competition.id }}/documents"
+              hx-target="#categories-area" hx-encoding="multipart/form-data"
+              hx-on::after-request="closeModal('docs-modal')">
+            <input type="file" name="files" accept=".xlsx,.xlsm" multiple required>
+            <div class="flex" style="justify-content:flex-end; margin-top:1rem;">
+                <button type="button" class="secondary" onclick="closeModal('docs-modal')">Anuluj</button>
+                <button type="submit">Wgraj</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- age category modal -->
+<div class="modal-backdrop hidden" id="age-modal">
+    <div class="modal">
+        <h3>Nowa kategoria wiekowa</h3>
+        <form method="post" action="/competitions/{{ competition.id }}/age-categories">
+            <div class="grid2">
+                <div><label>Min. rok urodzenia</label><input name="min_year" type="number" required></div>
+                <div><label>Maks. rok urodzenia</label><input name="max_year" type="number" required></div>
+            </div>
+            <div class="flex" style="justify-content:flex-end; margin-top:1rem;">
+                <button type="button" class="secondary" onclick="closeModal('age-modal')">Anuluj</button>
+                <button type="submit">Dodaj (Submit)</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

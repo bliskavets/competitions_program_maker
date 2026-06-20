@@ -1,0 +1,135 @@
+{% set data = round.data %}
+<div class="card" id="round-{{ round.id }}-form">
+    <div class="flex" style="justify-content:space-between;">
+        <h3>Round {{ round.index }}</h3>
+        <button type="button" class="secondary" onclick="document.getElementById('round-form-area').innerHTML=''">Zamknij</button>
+    </div>
+
+    {% if saved %}<div class="message ok">Zapisano.</div>{% endif %}
+
+    {% if data is none and round.index > 1 %}
+        <p>Podaj liczbę uczestników w tej rundzie:</p>
+        <form hx-post="/rounds/{{ round.id }}/generate" hx-target="#round-form-area">
+            <div class="flex">
+                <input name="count" type="number" min="1" required style="max-width:120px;">
+                <button type="submit">Submit</button>
+            </div>
+        </form>
+    {% elif data is none %}
+        <p class="muted">Brak uczestników. Dodaj uczestników w tabeli powyżej.</p>
+    {% else %}
+        <form id="round-save-{{ round.id }}" hx-post="/rounds/{{ round.id }}/save" hx-target="#round-form-area">
+            <input type="hidden" name="data" id="round-data-{{ round.id }}">
+        </form>
+
+        <div id="bracket-{{ round.id }}">
+            {% set groups = data.groups if data.groups is defined else [data] %}
+            {% for g in groups %}
+                {% if g.name %}<h4>Grupa {{ g.name }}</h4>{% endif %}
+                {% if g.schedule is defined %}
+                    {# round-robin group #}
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Lp.</th><th>Nazwisko i imię</th><th>Rok</th><th>Klub</th>
+                                {% for i in range(1, g.num_rounds + 1) %}<th class="center">{{ i }}</th>{% endfor %}
+                                <th>suma PKT</th><th>M-ce</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in g.rows %}
+                            <tr>
+                                <td class="center">{{ row.lp }}</td>
+                                <td><input value="{{ row.name }}" data-edit="name"
+                                           {% if not rights.can_update %}readonly{% endif %}></td>
+                                <td class="center">{{ row.year or '' }}</td>
+                                <td>{{ row.team or '' }}</td>
+                                {% for i in range(1, g.num_rounds + 1) %}
+                                    {% if row.rest_round == i %}
+                                        <td class="rest">wl</td>
+                                    {% else %}
+                                        <td></td>
+                                    {% endif %}
+                                {% endfor %}
+                                <td></td><td></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    <p class="muted" style="font-size:0.82rem;">
+                        Terminarz (każdy z każdym): rundy 1–{{ g.num_rounds }}; „wl” = wolny los (odpoczynek).
+                    </p>
+                {% elif g.rounds is defined %}
+                    {# single elimination bracket #}
+                    <p>Drabinka pucharowa — {{ g.num_participants }} uczestników (rozmiar {{ g.bracket_size }}, byes: {{ g.byes }}).</p>
+                    <table>
+                        <thead><tr><th>Para</th><th>Góra</th><th>Dół</th></tr></thead>
+                        <tbody>
+                        {% for m in g.rounds[0].matches %}
+                            <tr>
+                                <td class="center">{{ loop.index }}</td>
+                                <td class="center">nr {{ m.top if m.top is not none else '—' }}</td>
+                                {% if m.bottom is none %}
+                                    <td class="center bye">wolny (świeży)</td>
+                                {% else %}
+                                    <td class="center">nr {{ m.bottom }}</td>
+                                {% endif %}
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                {% endif %}
+            {% endfor %}
+
+            {% if data.final %}
+                <h4>FINAŁ</h4>
+                <table style="max-width:420px;">
+                    <tbody>
+                    {% for pair in data.final.pairs %}
+                        <tr><td>{{ pair[0] }}</td><td class="center">—</td><td>{{ pair[1] }}</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                <table style="max-width:420px; margin-top:0.6rem;">
+                    <thead><tr><th>M-ce</th><th>Nazwisko i imię</th></tr></thead>
+                    <tbody>
+                    {% for place in data.final.places %}
+                        <tr><td class="center">{{ place }}</td><td></td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
+        </div>
+
+        <div class="export-bar">
+            {% if rights.can_update %}
+            <button type="button" onclick="saveRound({{ round.id }})">💾 Save</button>
+            {% endif %}
+            <a class="btn secondary" href="/rounds/{{ round.id }}/excel">⬇ Download as Excel</a>
+            <a class="btn secondary" href="/rounds/{{ round.id }}/pdf">⬇ Download as PDF</a>
+            <a class="btn ghost" href="/rounds/{{ round.id }}/excel-judgement">⬇ Excel (sędziowanie)</a>
+            <a class="btn ghost" href="/rounds/{{ round.id }}/pdf-judgement">⬇ PDF (sędziowanie)</a>
+        </div>
+    {% endif %}
+</div>
+
+<script>
+// Collect edited wrestler names back into the stored bracket JSON before saving.
+function saveRound(roundId) {
+    const base = {{ data | tojson if data is not none else 'null' }};
+    if (!base) return;
+    const container = document.getElementById('bracket-' + roundId);
+    const groups = base.groups || [base];
+    const inputs = container.querySelectorAll('input[data-edit="name"]');
+    let idx = 0;
+    groups.forEach((g) => {
+        if (g.rows) {
+            g.rows.forEach((row) => {
+                if (inputs[idx]) { row.name = inputs[idx].value; idx++; }
+            });
+        }
+    });
+    document.getElementById('round-data-' + roundId).value = JSON.stringify(base);
+    htmx.trigger('#round-save-' + roundId, 'submit');
+}
+</script>

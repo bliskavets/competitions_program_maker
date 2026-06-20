@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Logowanie — System SUMO{% endblock %}
+{% block content %}
+<div style="max-width: 420px; margin: 3rem auto;">
+    <h1 style="text-align:center;">🥋 System SUMO</h1>
+    <p class="muted" style="text-align:center;">Protokoły i drabinki zawodów</p>
+
+    {% if message %}
+        <div class="message {{ 'ok' if ok_message else 'error' }}">{{ message }}</div>
+    {% endif %}
+
+    <div class="card">
+    {% if mode == 'signin' %}
+        <h2>Zaloguj się</h2>
+        <form method="post" action="/login">
+            <label>Login lub e-mail</label>
+            <input name="identifier" required autofocus>
+            <label>Hasło</label>
+            <input name="password" type="password" required>
+            <div style="margin-top:1rem;"><button type="submit">Zaloguj (Sign In)</button></div>
+        </form>
+        <hr>
+        <div class="flex" style="gap:0.5rem;">
+            <a class="btn secondary" href="/signup">Zarejestruj się (Sign Up)</a>
+            <a class="btn ghost" href="/reset">Resetuj hasło</a>
+        </div>
+
+    {% elif mode == 'signup' %}
+        <h2>Rejestracja</h2>
+        <form method="post" action="/signup">
+            <label>Login</label><input name="login" required>
+            <label>E-mail</label><input name="email" type="email" required>
+            <label>Hasło</label><input name="password" type="password" required>
+            <label>Powtórz hasło</label><input name="repeat_password" type="password" required>
+            <div style="margin-top:1rem;"><button type="submit">Utwórz konto</button></div>
+        </form>
+        <div style="margin-top:0.6rem;"><a href="/login">← Powrót do logowania</a></div>
+
+    {% elif mode == 'reset_request' %}
+        <h2>Resetowanie hasła</h2>
+        <form method="post" action="/reset/request">
+            <label>E-mail</label><input name="email" type="email" required>
+            <div style="margin-top:1rem;"><button type="submit">Resetuj hasło</button></div>
+        </form>
+        <div style="margin-top:0.6rem;"><a href="/login">← Powrót</a></div>
+
+    {% elif mode == 'reset_verify' %}
+        <h2>Wprowadź kod</h2>
+        <form method="post" action="/reset/verify">
+            <input type="hidden" name="email" value="{{ email }}">
+            <label>Kod z e-maila</label><input name="code" required autofocus>
+            <div style="margin-top:1rem;"><button type="submit">Potwierdź kod (Confirm the code)</button></div>
+        </form>
+
+    {% elif mode == 'reset_update' %}
+        <h2>Nowe hasło</h2>
+        <form method="post" action="/reset/update">
+            <input type="hidden" name="email" value="{{ email }}">
+            <input type="hidden" name="code" value="{{ code }}">
+            <label>Nowe hasło</label><input name="password" type="password" required>
+            <label>Powtórz hasło</label><input name="repeat_password" type="password" required>
+            <div style="margin-top:1rem;"><button type="submit">Zaktualizuj hasło (Update password)</button></div>
+        </form>
+    {% endif %}
+    </div>
+</div>
+{% endblock %}

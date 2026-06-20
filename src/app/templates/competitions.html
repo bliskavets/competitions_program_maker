@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Zawody — System SUMO{% endblock %}
+{% block nav %}
+<div class="topbar">
+    <a class="brand" href="/competitions">🥋 System SUMO</a>
+    <div class="actions">
+        <span>{{ user.login }}</span>
+        <button onclick="openModal('create-modal')">+ Nowe zawody</button>
+        <a class="btn secondary" href="/logout">Wyloguj</a>
+    </div>
+</div>
+{% endblock %}
+{% block content %}
+<h1>Zawody</h1>
+<p class="muted">Łącznie: {{ total }}</p>
+
+{% if not competitions %}
+    <div class="card">Brak zawodów. Kliknij „+ Nowe zawody”, aby utworzyć pierwsze.</div>
+{% endif %}
+
+<ul class="list">
+    {% for c in competitions %}
+    <li>
+        <div class="row-main" onclick="document.location='/competitions/{{ c.id }}'">
+            <strong>{{ c.name }}</strong>
+            <div class="muted">
+                {{ c.event_date or '' }} {% if c.birth_years %}· roczniki {{ c.birth_years }}{% endif %}
+            </div>
+        </div>
+        <div class="row-actions">
+            <button class="secondary" onclick="openModal('share-{{ c.id }}')">Udostępnij</button>
+            <form method="post" action="/competitions/{{ c.id }}/delete"
+                  data-confirm="Czy na pewno usunąć zawody „{{ c.name }}”?">
+                <button class="danger" type="submit">Usuń</button>
+            </form>
+        </div>
+
+        <!-- Share modal -->
+        <div class="modal-backdrop hidden" id="share-{{ c.id }}">
+            <div class="modal" onclick="event.stopPropagation()">
+                <h3>Udostępnij „{{ c.name }}”</h3>
+                <form hx-post="/competitions/{{ c.id }}/share" hx-target="#share-result-{{ c.id }}">
+                    <label>Uprawnienia</label>
+                    <select name="level">
+                        <option value="read" selected>Odczyt (Read)</option>
+                        <option value="edit">Edycja (Edit)</option>
+                    </select>
+                    <label>Login lub e-mail użytkownika</label>
+                    <input name="target" required>
+                    <div id="share-result-{{ c.id }}"></div>
+                    <div class="flex" style="justify-content:flex-end; margin-top:1rem;">
+                        <button type="button" class="secondary" onclick="closeModal('share-{{ c.id }}')">Zamknij</button>
+                        <button type="submit">Udostępnij</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </li>
+    {% endfor %}
+</ul>
+
+{% if pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}<a class="btn secondary" href="/competitions?page={{ page-1 }}">←</a>{% endif %}
+    <span class="muted">Strona {{ page }} z {{ pages }}</span>
+    {% if page < pages %}<a class="btn secondary" href="/competitions?page={{ page+1 }}">→</a>{% endif %}
+</div>
+{% endif %}
+
+<!-- Create modal -->
+<div class="modal-backdrop hidden" id="create-modal">
+    <div class="modal">
+        <h3>Nowe zawody</h3>
+        <form method="post" action="/competitions">
+            <label>Nazwa</label><input name="name" required>
+            <label>Data</label><input name="event_date" type="date">
+            <label>Roczniki (lata urodzenia)</label><input name="birth_years" placeholder="np. 2012–2015">
+            <label>Opis</label><textarea name="description" rows="3"></textarea>
+            <div class="flex" style="justify-content:flex-end; margin-top:1rem;">
+                <button type="button" class="secondary" onclick="closeModal('create-modal')">Anuluj</button>
+                <button type="submit">Utwórz (Create)</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

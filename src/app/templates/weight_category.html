@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}{{ weight.name }} — {{ competition.name }}{% endblock %}
+{% block nav %}
+<div class="topbar">
+    <a class="brand" href="/competitions">🥋 System SUMO</a>
+    <div class="actions">
+        <span>{{ user.login }}</span>
+        <a class="btn secondary" href="/logout">Wyloguj</a>
+    </div>
+</div>
+{% endblock %}
+{% block content %}
+<div class="breadcrumb">
+    <a href="/competitions">Zawody</a> /
+    <a href="/competitions/{{ competition.id }}">{{ competition.name }}</a> /
+    <a href="/age-categories/{{ age.id }}">{{ age.name }}</a> /
+    {{ weight.name }}
+</div>
+<h1>Kategoria wagowa: {{ weight.name }}</h1>
+
+<h2>Uczestnicy</h2>
+<form method="post" action="/weight-categories/{{ weight.id }}/participants/save">
+<table>
+    <thead>
+        <tr>
+            <th>Name and Surname</th><th>Year of Birth</th><th>Team</th>
+            <th>Other Information</th>
+            {% if rights.can_delete %}<th class="center">Akcje</th>{% endif %}
+        </tr>
+    </thead>
+    <tbody id="participants-body">
+        {% for p in participants %}
+        <tr>
+            <td><input name="name_{{ p.id }}" value="{{ p.name }}" {% if not rights.can_update %}readonly{% endif %}></td>
+            <td><input name="year_{{ p.id }}" value="{{ p.birth_year or '' }}" {% if not rights.can_update %}readonly{% endif %}></td>
+            <td><input name="team_{{ p.id }}" value="{{ p.team or '' }}" {% if not rights.can_update %}readonly{% endif %}></td>
+            <td><input name="other_{{ p.id }}" value="{{ p.other_info or '' }}" {% if not rights.can_update %}readonly{% endif %}></td>
+            {% if rights.can_delete %}
+            <td class="center">
+                <button class="danger" type="submit"
+                        formaction="/weight-categories/{{ weight.id }}/participants/{{ p.id }}/delete"
+                        formmethod="post"
+                        data-confirm="Usunąć uczestnika „{{ p.name }}”?">Usuń</button>
+            </td>
+            {% endif %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% if rights.can_update %}
+<div class="export-bar">
+    <button type="button" class="secondary" onclick="addParticipantRow()">+ Add new participant</button>
+    <button type="submit">Save changes</button>
+</div>
+{% endif %}
+</form>
+
+{% if rights.can_update %}
+<h2>Losowanie (Shuffle)</h2>
+<button hx-post="/weight-categories/{{ weight.id }}/shuffle" hx-target="#shuffle-area">
+    🔀 Shuffle participants
+</button>
+<div id="shuffle-area" class="card" style="margin-top:0.8rem;">
+    <p class="muted">Kliknij „Shuffle participants”, aby wylosować kolejność.</p>
+</div>
+{% endif %}
+
+<h2>Rundy (Rounds)</h2>
+<div class="flex" style="margin-bottom:0.6rem;">
+    {% if rights.can_create %}
+    <form method="post" action="/weight-categories/{{ weight.id }}/rounds">
+        <button type="submit">+ Create new round</button>
+    </form>
+    {% endif %}
+</div>
+<ul class="list" id="rounds-list">
+    {% for r in rounds %}
+    <li class="round-item">
+        <div class="row-main"
+             hx-get="/rounds/{{ r.id }}" hx-target="#round-form-area" hx-swap="innerHTML">
+            <strong>Round {{ r.index }}</strong>
+            <span class="muted">{% if r.num_participants %}({{ r.num_participants }} uczestników){% endif %}</span>
+        </div>
+        <div class="row-actions">
+            {% if rights.can_delete %}
+            <form method="post" action="/rounds/{{ r.id }}/delete" data-confirm="Usunąć rundę {{ r.index }}?">
+                <button class="danger" type="submit">Usuń</button>
+            </form>
+            {% endif %}
+        </div>
+    </li>
+    {% endfor %}
+</ul>
+<div id="round-form-area"></div>
+
+<script>
+function addParticipantRow() {
+    const tbody = document.getElementById('participants-body');
+    const tr = document.createElement('tr');
+    const del = {{ 'true' if rights.can_delete else 'false' }};
+    tr.innerHTML =
+        '<td><input name="newname" placeholder="Imię i nazwisko"></td>' +
+        '<td><input name="newyear"></td>' +
+        '<td><input name="newteam"></td>' +
+        '<td><input name="newother"></td>' +
+        (del ? '<td class="center"><button type="button" class="secondary" onclick="this.closest(\'tr\').remove()">×</button></td>' : '');
+    tbody.appendChild(tr);
+}
+</script>
+{% endblock %}
