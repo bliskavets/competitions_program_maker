@@ -13,6 +13,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.graphics.shapes import Drawing, Line, Rect, String
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
@@ -63,10 +64,17 @@ def render_bracket_pdf(
     styles = getSampleStyleSheet()
     for name in ("Title", "Heading3", "Normal"):
         styles[name].fontName = FONT_BOLD if name != "Normal" else FONT
+    # compact headings so the whole sheet fits one A4
+    styles["Title"].fontSize = 15
+    styles["Title"].leading = 18
+    styles["Title"].spaceAfter = 2
+    styles["Heading3"].fontSize = 11
+    styles["Heading3"].spaceBefore = 2
+    styles["Heading3"].spaceAfter = 2
     story: list[Any] = []
     if title:
         story.append(Paragraph(title, styles["Title"]))
-        story.append(Spacer(1, 4 * mm))
+        story.append(Spacer(1, 2 * mm))
 
     avail = doc.width
 
@@ -84,12 +92,12 @@ def render_bracket_pdf(
             story.append(_single_elim_table(group, avail, judging))
         else:
             story.append(_round_robin_table(group, avail, judging))
-        story.append(Spacer(1, 4 * mm))
+        story.append(Spacer(1, 2 * mm))
 
     if bracket.get("final"):
         story.extend(_final_flow(bracket["final"], avail, styles))
 
-    story.append(Spacer(1, 6 * mm))
+    story.append(Spacer(1, 3 * mm))
     footer = Table(
         [["Kierownik List", "", "Sędzia Główny"]],
         colWidths=[avail * 0.4, avail * 0.2, avail * 0.4],
@@ -153,6 +161,8 @@ def _round_robin_table(group: dict[str, Any], avail: float, judging: bool) -> Ta
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("ALIGN", (1, 0), (1, -1), "LEFT"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
     ]
     for col, r in rest_cells:
         style.append(("BACKGROUND", (col, r), (col, r), REST_COLOR))
@@ -190,25 +200,12 @@ def _single_elim_table(group: dict[str, Any], avail: float, judging: bool) -> Ta
 
 
 def _final_flow(final: dict[str, Any], avail: float, styles) -> list[Any]:
-    flow: list[Any] = [Spacer(1, 4 * mm), Paragraph("<b>FINAŁ</b>", styles["Heading3"])]
-    pairs = final.get("pairs", [])
-    pair_data = [[a, "—", b] for a, b in pairs]
-    if pair_data:
-        t = Table(pair_data, colWidths=[avail * 0.25, avail * 0.1, avail * 0.25])
-        t.setStyle(
-            TableStyle(
-                [
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                    ("FONTNAME", (0, 0), (-1, -1), FONT),
-                    ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ]
-            )
-        )
-        flow.append(t)
-    flow.append(Spacer(1, 3 * mm))
+    flow: list[Any] = [Spacer(1, 3 * mm), Paragraph("<b>FINAŁ</b>", styles["Heading3"])]
+
+    tree = _final_tree_drawing(final)
+
     places = [["M-ce", "Nazwisko i imię"]] + [[p, ""] for p in final.get("places", [])]
-    pt = Table(places, colWidths=[avail * 0.12, avail * 0.5])
+    pt = Table(places, colWidths=[18 * mm, 58 * mm])
     pt.setStyle(
         TableStyle(
             [
@@ -217,8 +214,71 @@ def _final_flow(final: dict[str, Any], avail: float, styles) -> list[Any]:
                 ("FONTNAME", (0, 0), (-1, -1), FONT),
                 ("FONTNAME", (0, 0), (-1, 0), FONT_BOLD),
                 ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
             ]
         )
     )
-    flow.append(pt)
+
+    # Tree and the M-ce (places) table side by side, mirroring the printed sheet.
+    combo = Table([[tree, pt]], colWidths=[tree.width + 4 * mm, 80 * mm])
+    combo.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    flow.append(combo)
     return flow
+
+
+def _final_tree_drawing(final: dict[str, Any]) -> Drawing:
+    """Draw the knockout tree (A1–B2, B1–A2 → final) with empty name boxes,
+    mirroring the on-screen FINAŁ bracket. Coordinates are in millimetres."""
+    M = mm
+    PRIMARY = colors.HexColor("#b5121b")
+    GREY = colors.HexColor("#999999")
+    bw, bh = 40, 8            # seed/semi box size (mm) — compact to fit one A4
+    sx = 11                   # x of seed boxes
+    sf_x = 66                 # x of semifinal boxes
+    fx, fbw, fbh = 120, 46, 11  # final box
+    drawing = Drawing(168 * M, 52 * M)
+
+    def box(x, y, w, h, *, accent=False):
+        drawing.add(
+            Rect(x * M, y * M, w * M, h * M, strokeColor=PRIMARY if accent else colors.black,
+                 strokeWidth=1.4 if accent else 0.8, fillColor=colors.white)
+        )
+
+    def tag(x, y, text, color=PRIMARY, size=8, bold=True):
+        drawing.add(
+            String(x * M, y * M, text, fontName=FONT_BOLD if bold else FONT,
+                   fontSize=size, fillColor=color)
+        )
+
+    def line(x1, y1, x2, y2):
+        drawing.add(Line(x1 * M, y1 * M, x2 * M, y2 * M, strokeColor=colors.black, strokeWidth=0.8))
+
+    # seed boxes + labels: pair 1 (A1,B2) high, pair 2 (B1,A2) low
+    seeds = [("A1", 42), ("B2", 32), ("B1", 14), ("A2", 4)]
+    for label, by in seeds:
+        box(sx, by, bw, bh)
+        tag(1, by + 2.5, label)
+
+    def connector(top_mid, bot_mid, vbar, target_x, sf_y):
+        mid = (top_mid + bot_mid) / 2
+        line(sx + bw, top_mid, vbar, top_mid)
+        line(sx + bw, bot_mid, vbar, bot_mid)
+        line(vbar, bot_mid, vbar, top_mid)
+        line(vbar, mid, target_x, mid)
+        box(sf_x, sf_y, bw, bh)
+        tag(sf_x + 2, sf_y + 2.5, "zwycięzca", GREY, 6.5)
+
+    connector(46, 36, 60, sf_x, 37)   # SF1 mid = 41
+    connector(18, 8, 60, sf_x, 9)     # SF2 mid = 13
+
+    # final connector: SF1 (mid 41) + SF2 (mid 13) -> final box (mid 27)
+    sf_r = sf_x + bw
+    line(sf_r, 41, 113, 41)
+    line(sf_r, 13, 113, 13)
+    line(113, 13, 113, 41)
+    line(113, 27, fx, 27)
+    box(fx, 27 - fbh / 2, fbw, fbh, accent=True)
+    tag(fx + 2, 27 + 1, "FINAŁ — 1. miejsce", PRIMARY, 6.5)
+
+    return drawing
