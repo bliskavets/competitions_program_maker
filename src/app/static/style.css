@@ -103,3 +103,43 @@ ul.list li .row-actions { display: flex; gap: 0.4rem; }
 .draw-row { cursor: grab; }
 .export-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.8rem 0; }
 .round-item.active { border-color: var(--primary); }
+td.pair { font-weight: 600; }
+
+/* FINAŁ knockout tree */
+.final-tree {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    flex-wrap: wrap;
+    padding: 0.8rem 0;
+}
+.ft-col { display: flex; flex-direction: column; gap: 22px; }
+.ft-pair {
+    display: flex; flex-direction: column; gap: 6px;
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px;
+    position: relative;
+}
+.ft-pair::after {
+    content: ""; position: absolute; right: -14px; top: 50%;
+    width: 14px; height: 1px; background: var(--border);
+}
+.ft-slot, .ft-winner, .ft-final-box {
+    display: flex; align-items: center; gap: 6px;
+}
+.ft-slot input, .ft-winner input, .ft-final-box input, .ft-places input {
+    padding: 0.3rem 0.4rem;
+}
+.ft-tag {
+    display: inline-block; min-width: 34px; font-weight: 700;
+    color: var(--primary-dark); font-size: 0.82rem;
+}
+.ft-mid { gap: 60px; justify-content: space-around; }
+.ft-winner {
+    border-bottom: 1px solid var(--border); padding-bottom: 4px;
+}
+.ft-final .ft-final-box {
+    flex-direction: column; align-items: stretch;
+    border: 2px solid var(--primary); border-radius: 8px; padding: 10px; gap: 6px;
+}
+.ft-places { width: auto; min-width: 280px; align-self: flex-start; }
+.ft-places input { width: 100%; border: none; }

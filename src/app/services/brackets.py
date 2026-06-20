@@ -65,28 +65,43 @@ def round_robin_table(participants: list[dict[str, Any]]) -> dict[str, Any]:
     """Build a round-robin sheet structure for a single group.
 
     ``participants`` is a list of dicts (number, name, year, team, other...).
-    Returns rows (with the per-round bye marked) plus the pairing schedule.
+    For every wrestler (row) and every round (column) the table records the
+    *opponent's* position (``cells``), or ``None`` when the wrestler rests that
+    round (rendered as ``wl``). This mirrors the "Kategoria wagowa" pairing grid
+    of the printed sheet, where you can read who fights whom in each round.
     """
     n = len(participants)
     schedule = round_robin_rounds(n)
-    rests = rest_rounds(n)
     num_rounds = len(schedule)
+
+    # opponent[position][round_index] = opponent position (1-based) or None (bye)
+    opponent: dict[int, list[int | None]] = {
+        i: [None] * num_rounds for i in range(1, n + 1)
+    }
+    for r_idx, pairs in enumerate(schedule):
+        for a, b in pairs:
+            if a is not None and b is not None:
+                opponent[a][r_idx] = b
+                opponent[b][r_idx] = a
+
     rows = []
     for idx, p in enumerate(participants, start=1):
+        cells = opponent[idx]
+        rest = next((r + 1 for r, o in enumerate(cells) if o is None), None)
         rows.append(
             {
                 "lp": idx,
+                "number": p.get("number"),
                 "name": p.get("name", ""),
                 "year": p.get("year") or p.get("birth_year"),
                 "team": p.get("team"),
                 "other": p.get("other") or p.get("other_info"),
-                "rest_round": rests.get(idx),  # which round this wrestler sits out
+                "cells": cells,  # opponent position per round (None = bye/wl)
+                "rest_round": rest,
             }
         )
-    # schedule as list of rounds, each a list of {a,b} (numbers, None=bye)
-    sched_json = [
-        [{"a": a, "b": b} for (a, b) in rnd] for rnd in schedule
-    ]
+    # schedule as list of rounds, each a list of {a,b} (positions, None=bye)
+    sched_json = [[{"a": a, "b": b} for (a, b) in rnd] for rnd in schedule]
     return {
         "type": "round_robin",
         "num_participants": n,
@@ -96,12 +111,16 @@ def round_robin_table(participants: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def single_elimination(n: int) -> dict[str, Any]:
-    """Build an empty single-elimination bracket for ``n`` wrestlers.
+def single_elimination(n: int, blank: bool = False) -> dict[str, Any]:
+    """Build a single-elimination bracket for ``n`` wrestlers.
 
     Wrestlers are seeded into the next power-of-two sized bracket; the surplus
     slots become byes so that some wrestlers rest in the first round (marked
     "wolny / свободен" and greyed out in the UI).
+
+    When ``blank`` is True the first-round slots are left empty (no positions
+    pre-filled) — used for rounds 2+, where the referee enters the draw numbers
+    of the wrestlers who advanced.
     """
     if n < 1:
         return {"type": "single_elim", "num_participants": 0, "rounds": []}
@@ -112,11 +131,13 @@ def single_elimination(n: int) -> dict[str, Any]:
 
     # Round 1 slots: standard seeding order so byes are spread out.
     seeds = _seed_order(size)
-    # Map slot -> wrestler number (1..n) or None for a bye.
+    # Map slot -> wrestler position (1..n) or None for a bye.
     slot_to_player: dict[int, int | None] = {}
     player = 1
     for slot in seeds:
-        if slot <= n:
+        if blank:
+            slot_to_player[slot] = None
+        elif slot <= n:
             slot_to_player[slot] = player
             player += 1
         else:
@@ -217,14 +238,25 @@ def build_initial_bracket(participants: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def build_empty_bracket(n: int) -> dict[str, Any]:
-    """Empty bracket for Round 2+ given a user-entered participant count."""
+    """Empty bracket for Round 2+ given a user-entered participant count.
+
+    Rows/slots carry NO pre-filled numbers — the referee enters the draw numbers
+    of the wrestlers (and uses "Fillup" to pull their names). Only the pairing
+    structure (who-fights-whom by position) and the byes are pre-computed.
+    """
     if n <= ROUND_ROBIN_MAX:
-        # Round-robin with placeholder (empty) rows.
+        # Round-robin pairing grid with empty rows (no names/numbers yet).
         placeholders = [{"name": "", "year": None, "team": None} for _ in range(n)]
+        table = round_robin_table(placeholders)
+        for row in table["rows"]:
+            row["editable"] = True  # render a Number input + fillable name
         return {
             "type": "single_group",
             "num_participants": n,
-            "groups": [{"name": "", **round_robin_table(placeholders)}],
+            "editable": True,
+            "groups": [{"name": "", **table}],
             "final": None,
         }
-    return single_elimination(n)
+    se = single_elimination(n, blank=True)
+    se["editable"] = True
+    return se

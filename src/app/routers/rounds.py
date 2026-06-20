@@ -17,11 +17,14 @@ from app.templating import templates
 router = APIRouter()
 
 
-def _participants_payload(weight: WeightCategory) -> list[dict]:
-    parts = sorted(
+def _ordered(weight: WeightCategory) -> list[Participant]:
+    return sorted(
         weight.participants,
         key=lambda p: (p.order_index is None, p.order_index or 0, p.id),
     )
+
+
+def _participants_payload(weight: WeightCategory) -> list[dict]:
     return [
         {
             "number": i + 1,
@@ -30,8 +33,20 @@ def _participants_payload(weight: WeightCategory) -> list[dict]:
             "team": p.team,
             "other": p.other_info,
         }
-        for i, p in enumerate(parts)
+        for i, p in enumerate(_ordered(weight))
     ]
+
+
+def _participant_map(weight: WeightCategory) -> dict[str, dict]:
+    """draw number (as string, 1-based) -> participant data, for the Fillup button.
+
+    The number is the persisted draw position (``order_index``); it stays stable
+    after shuffling, so the referee can reference it in later rounds.
+    """
+    return {
+        str(i + 1): {"name": p.name, "year": p.birth_year, "team": p.team}
+        for i, p in enumerate(_ordered(weight))
+    }
 
 
 def load_round(
@@ -83,7 +98,13 @@ async def round_form(
         db.commit()
     return templates.TemplateResponse(
         "partials/round_form.html",
-        {"request": request, "round": rnd, "weight": weight, "rights": rights},
+        {
+            "request": request,
+            "round": rnd,
+            "weight": weight,
+            "rights": rights,
+            "participant_map": _participant_map(weight),
+        },
     )
 
 
@@ -102,7 +123,13 @@ async def generate_round(
     db.commit()
     return templates.TemplateResponse(
         "partials/round_form.html",
-        {"request": request, "round": rnd, "weight": weight, "rights": rights},
+        {
+            "request": request,
+            "round": rnd,
+            "weight": weight,
+            "rights": rights,
+            "participant_map": _participant_map(weight),
+        },
     )
 
 
@@ -124,7 +151,14 @@ async def save_round(
     db.commit()
     return templates.TemplateResponse(
         "partials/round_form.html",
-        {"request": request, "round": rnd, "weight": weight, "rights": rights, "saved": True},
+        {
+            "request": request,
+            "round": rnd,
+            "weight": weight,
+            "rights": rights,
+            "saved": True,
+            "participant_map": _participant_map(weight),
+        },
     )
 
 

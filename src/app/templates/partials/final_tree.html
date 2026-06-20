@@ -1,0 +1,33 @@
+{# Knockout tree after the group stage: A1–B2 and B1–A2 cross over into the
+   final; the two semi-final losers share 3rd place (repasaż). Name slots are
+   left blank — they are filled in once the group stage is decided. #}
+<div class="final-tree">
+    <div class="ft-col">
+        <div class="ft-pair">
+            <div class="ft-slot"><span class="ft-tag">A1</span><input placeholder="zawodnik"></div>
+            <div class="ft-slot"><span class="ft-tag">B2</span><input placeholder="zawodnik"></div>
+        </div>
+        <div class="ft-pair">
+            <div class="ft-slot"><span class="ft-tag">B1</span><input placeholder="zawodnik"></div>
+            <div class="ft-slot"><span class="ft-tag">A2</span><input placeholder="zawodnik"></div>
+        </div>
+    </div>
+    <div class="ft-col ft-mid">
+        <div class="ft-winner"><span class="ft-tag">zwycięzca</span><input placeholder=""></div>
+        <div class="ft-winner"><span class="ft-tag">zwycięzca</span><input placeholder=""></div>
+    </div>
+    <div class="ft-col ft-final">
+        <div class="ft-final-box">
+            <div class="ft-tag">FINAŁ — 1. miejsce</div>
+            <input placeholder="zwycięzca finału">
+        </div>
+    </div>
+    <table class="ft-places">
+        <thead><tr><th>M-ce</th><th>Nazwisko i imię</th></tr></thead>
+        <tbody>
+            {% for place in data.final.places %}
+            <tr><td class="center">{{ place }}</td><td><input placeholder=""></td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>

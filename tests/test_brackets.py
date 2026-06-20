@@ -65,3 +65,35 @@ def test_empty_bracket_large_is_single_elim():
     e = build_empty_bracket(12)
     assert e["type"] == "single_elim"
     assert e["bracket_size"] == 16
+
+
+def test_round_robin_table_shows_opponents():
+    b = build_initial_bracket(_people(4))
+    rows = b["groups"][0]["rows"]
+    # 4 wrestlers -> 3 rounds, no byes; pairings are reciprocal
+    assert all(len(r["cells"]) == 3 for r in rows)
+    assert all(r["rest_round"] is None for r in rows)  # even count: nobody rests
+    # row 1 faces row X in round k  <=>  row X faces row 1 in round k
+    for r_idx, opp in enumerate(rows[0]["cells"]):
+        assert rows[opp - 1]["cells"][r_idx] == 1
+
+
+def test_round_robin_odd_marks_bye_in_cells():
+    b = build_initial_bracket(_people(5))
+    rows = b["groups"][0]["rows"]
+    # one None (bye) per wrestler somewhere in their schedule
+    assert all(r["cells"].count(None) == 1 for r in rows)
+    assert all(r["rest_round"] is not None for r in rows)
+
+
+def test_empty_bracket_has_no_prefilled_numbers():
+    e = build_empty_bracket(4)
+    assert e["editable"] is True
+    rows = e["groups"][0]["rows"]
+    # names blank, numbers not pre-assigned (referee fills them in)
+    assert all(r["name"] == "" and r["number"] is None for r in rows)
+
+    se = build_empty_bracket(12)
+    assert se["editable"] is True
+    first = se["rounds"][0]["matches"]
+    assert all(m["top"] is None and m["bottom"] is None for m in first)

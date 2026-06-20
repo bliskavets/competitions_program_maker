@@ -119,21 +119,21 @@ def _round_robin_table(group: dict[str, Any], avail: float, judging: bool) -> Ta
     data = [headers]
     rest_cells: list[tuple[int, int]] = []
     for ridx, row in enumerate(group.get("rows", []), start=1):
+        opponents = row.get("cells") or [None] * num_rounds
+        round_cells = ["wl" if o is None else o for o in opponents]
         cells = [
             row.get("lp"),
             row.get("name"),
             row.get("year"),
             row.get("team") or "",
         ]
-        cells += [""] * num_rounds
+        cells += round_cells
         cells += ["", ""]
         if judging:
             cells.append("")
-        rest = row.get("rest_round")
-        if rest:
-            col = 4 + rest - 1  # 0-based; round columns start at index 4
-            cells[col] = "wl"
-            rest_cells.append((col, ridx))
+        for ci, val in enumerate(round_cells):
+            if val == "wl":
+                rest_cells.append((4 + ci, ridx))  # 0-based; rounds start at col 4
         data.append(cells)
 
     # column widths

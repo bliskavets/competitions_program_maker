@@ -18,37 +18,54 @@
     {% elif data is none %}
         <p class="muted">Brak uczestników. Dodaj uczestników w tabeli powyżej.</p>
     {% else %}
+        {% set editable = data.editable and rights.can_update %}
         <form id="round-save-{{ round.id }}" hx-post="/rounds/{{ round.id }}/save" hx-target="#round-form-area">
             <input type="hidden" name="data" id="round-data-{{ round.id }}">
         </form>
+
+        {% if editable %}
+        <div class="message">
+            Wpisz <strong>numery</strong> zawodników (z losowania) w kolumnie <em>Nr</em>,
+            a następnie kliknij <strong>Fillup</strong>, aby uzupełnić dane.
+            Numery i miejsca w drabince uzupełnia sędzia.
+        </div>
+        {% endif %}
 
         <div id="bracket-{{ round.id }}">
             {% set groups = data.groups if data.groups is defined else [data] %}
             {% for g in groups %}
                 {% if g.name %}<h4>Grupa {{ g.name }}</h4>{% endif %}
-                {% if g.schedule is defined %}
-                    {# round-robin group #}
+
+                {% if g.type == 'round_robin' %}
                     <table>
                         <thead>
                             <tr>
-                                <th>Lp.</th><th>Nazwisko i imię</th><th>Rok</th><th>Klub</th>
+                                <th>Lp.</th>
+                                {% if editable %}<th>Nr</th>{% endif %}
+                                <th>Nazwisko i imię</th><th>Rok</th><th>Klub</th>
                                 {% for i in range(1, g.num_rounds + 1) %}<th class="center">{{ i }}</th>{% endfor %}
                                 <th>suma PKT</th><th>M-ce</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for row in g.rows %}
-                            <tr>
+                            <tr data-lp="{{ row.lp }}">
                                 <td class="center">{{ row.lp }}</td>
+                                {% if editable %}
+                                <td><input class="num-input" data-edit="number" style="width:48px"
+                                           value="{{ row.number if row.number is not none else '' }}"></td>
+                                {% endif %}
                                 <td><input value="{{ row.name }}" data-edit="name"
                                            {% if not rights.can_update %}readonly{% endif %}></td>
-                                <td class="center">{{ row.year or '' }}</td>
-                                <td>{{ row.team or '' }}</td>
-                                {% for i in range(1, g.num_rounds + 1) %}
-                                    {% if row.rest_round == i %}
+                                <td class="center"><input value="{{ row.year or '' }}" data-edit="year" style="width:64px"
+                                           {% if not rights.can_update %}readonly{% endif %}></td>
+                                <td><input value="{{ row.team or '' }}" data-edit="team"
+                                           {% if not rights.can_update %}readonly{% endif %}></td>
+                                {% for cell in row.cells %}
+                                    {% if cell is none %}
                                         <td class="rest">wl</td>
                                     {% else %}
-                                        <td></td>
+                                        <td class="center pair">{{ cell }}</td>
                                     {% endif %}
                                 {% endfor %}
                                 <td></td><td></td>
@@ -57,22 +74,44 @@
                         </tbody>
                     </table>
                     <p class="muted" style="font-size:0.82rem;">
-                        Terminarz (każdy z każdym): rundy 1–{{ g.num_rounds }}; „wl” = wolny los (odpoczynek).
+                        System kołowy „każdy z każdym”. Liczba w kolumnie rundy = <strong>numer (Lp) przeciwnika</strong>
+                        w tej rundzie; „wl” = wolny los (odpoczynek).
                     </p>
-                {% elif g.rounds is defined %}
-                    {# single elimination bracket #}
-                    <p>Drabinka pucharowa — {{ g.num_participants }} uczestników (rozmiar {{ g.bracket_size }}, byes: {{ g.byes }}).</p>
+
+                {% elif g.type == 'single_elim' %}
+                    <p>Drabinka pucharowa — {{ g.num_participants }} uczestników
+                       (rozmiar {{ g.bracket_size }}, wolne losy: {{ g.byes }}).</p>
                     <table>
-                        <thead><tr><th>Para</th><th>Góra</th><th>Dół</th></tr></thead>
+                        <thead>
+                            <tr>
+                                <th>Para</th>
+                                <th>Góra {% if editable %}(nr){% endif %}</th>
+                                <th>Dół {% if editable %}(nr){% endif %}</th>
+                            </tr>
+                        </thead>
                         <tbody>
                         {% for m in g.rounds[0].matches %}
                             <tr>
                                 <td class="center">{{ loop.index }}</td>
-                                <td class="center">nr {{ m.top if m.top is not none else '—' }}</td>
-                                {% if m.bottom is none %}
+                                <td class="center" data-slot>
+                                    {% if editable %}
+                                        <input class="num-input" data-edit="number" style="width:48px" placeholder="nr">
+                                        <input data-edit="name" placeholder="zawodnik" style="width:150px">
+                                    {% else %}
+                                        nr {{ m.top if m.top is not none else '—' }}
+                                    {% endif %}
+                                </td>
+                                {% if m.bottom is none and not editable %}
                                     <td class="center bye">wolny (świeży)</td>
                                 {% else %}
-                                    <td class="center">nr {{ m.bottom }}</td>
+                                    <td class="center" data-slot>
+                                        {% if editable %}
+                                            <input class="num-input" data-edit="number" style="width:48px" placeholder="nr">
+                                            <input data-edit="name" placeholder="zawodnik" style="width:150px">
+                                        {% else %}
+                                            nr {{ m.bottom }}
+                                        {% endif %}
+                                    </td>
                                 {% endif %}
                             </tr>
                         {% endfor %}
@@ -83,25 +122,14 @@
 
             {% if data.final %}
                 <h4>FINAŁ</h4>
-                <table style="max-width:420px;">
-                    <tbody>
-                    {% for pair in data.final.pairs %}
-                        <tr><td>{{ pair[0] }}</td><td class="center">—</td><td>{{ pair[1] }}</td></tr>
-                    {% endfor %}
-                    </tbody>
-                </table>
-                <table style="max-width:420px; margin-top:0.6rem;">
-                    <thead><tr><th>M-ce</th><th>Nazwisko i imię</th></tr></thead>
-                    <tbody>
-                    {% for place in data.final.places %}
-                        <tr><td class="center">{{ place }}</td><td></td></tr>
-                    {% endfor %}
-                    </tbody>
-                </table>
+                {% include "partials/final_tree.html" %}
             {% endif %}
         </div>
 
         <div class="export-bar">
+            {% if editable %}
+            <button type="button" class="secondary" onclick="fillup({{ round.id }})">⤵ Fillup</button>
+            {% endif %}
             {% if rights.can_update %}
             <button type="button" onclick="saveRound({{ round.id }})">💾 Save</button>
             {% endif %}
@@ -114,18 +142,42 @@
 </div>
 
 <script>
-// Collect edited wrestler names back into the stored bracket JSON before saving.
+// number -> participant data, persisted via the draw (order). Used by Fillup.
+window.PMAP_{{ round.id }} = {{ participant_map | tojson }};
+
+function fillup(roundId) {
+    const map = window['PMAP_' + roundId] || {};
+    document.querySelectorAll('#bracket-' + roundId + ' .num-input').forEach((inp) => {
+        const n = inp.value.trim();
+        const slot = inp.closest('[data-slot]') || inp.closest('tr');
+        if (!slot) return;
+        const nameEl = slot.querySelector('[data-edit="name"]');
+        const yearEl = slot.querySelector('[data-edit="year"]');
+        const teamEl = slot.querySelector('[data-edit="team"]');
+        const p = map[n];
+        if (p) {
+            if (nameEl) nameEl.value = p.name || '';
+            if (yearEl) yearEl.value = p.year || '';
+            if (teamEl) teamEl.value = p.team || '';
+        }
+    });
+}
+
+// Collect edited numbers/names back into the bracket JSON before saving.
 function saveRound(roundId) {
     const base = {{ data | tojson if data is not none else 'null' }};
     if (!base) return;
     const container = document.getElementById('bracket-' + roundId);
     const groups = base.groups || [base];
-    const inputs = container.querySelectorAll('input[data-edit="name"]');
     let idx = 0;
+    const names = container.querySelectorAll('table [data-edit="name"]');
+    const nums = container.querySelectorAll('table [data-edit="number"]');
     groups.forEach((g) => {
         if (g.rows) {
             g.rows.forEach((row) => {
-                if (inputs[idx]) { row.name = inputs[idx].value; idx++; }
+                if (names[idx]) row.name = names[idx].value;
+                if (nums[idx]) row.number = nums[idx].value || null;
+                idx++;
             });
         }
     });

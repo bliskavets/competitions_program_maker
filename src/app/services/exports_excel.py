@@ -88,24 +88,25 @@ def _render_round_robin(
     r += 1
 
     for row_data in group.get("rows", []):
+        # round columns show the opponent's position (or "wl" for the bye)
+        cells = row_data.get("cells") or [None] * num_rounds
+        round_cells = ["wl" if o is None else o for o in cells]
         values = [
             row_data.get("lp"),
             row_data.get("name"),
             row_data.get("year"),
             row_data.get("team"),
         ]
-        values += [None] * num_rounds  # result columns (filled by judge)
+        values += round_cells
         values += [None, None]  # suma PKT, M-ce
         if judging:
             values.append(None)
-        rest = row_data.get("rest_round")
         for c, v in enumerate(values, start=1):
             cell = ws.cell(row=r, column=c, value=v)
             cell.border = BORDER
             cell.alignment = LEFT if c == 2 else CENTER
-            # grey out the round in which this wrestler rests ("wl")
-            if rest and c == 4 + rest:
-                cell.value = "wl"
+            # grey out the bye ("wl") cell
+            if 5 <= c <= 4 + num_rounds and v == "wl":
                 cell.fill = REST_FILL
         r += 1
     return r
