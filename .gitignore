@@ -11,3 +11,4 @@ htmlcov/
 *.db
 .DS_Store
 docker-compose.override.yml
+deploy/.env.deploy
