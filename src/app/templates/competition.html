@@ -22,6 +22,8 @@
     {% if rights.can_create %}
     <button class="secondary" onclick="openModal('age-modal')">+ Kategoria wiekowa</button>
     {% endif %}
+    <a class="btn ghost" href="/competitions/{{ competition.id }}/results/excel">⬇ Zbiorcze wyniki Excel</a>
+    <a class="btn ghost" href="/competitions/{{ competition.id }}/results/pdf">⬇ Zbiorcze wyniki PDF</a>
 </div>
 
 <div id="categories-area">
@@ -33,13 +35,14 @@
     <div class="modal">
         <h3>Dodaj dokumenty (Excel)</h3>
         <p class="muted">Można wybrać wiele plików .xlsx. Każdy arkusz = kategoria wiekowa.</p>
+        <p><a class="btn ghost" href="/competitions/{{ competition.id }}/import-template.xlsx">⬇ Pobierz szablon Excel</a></p>
         <form hx-post="/competitions/{{ competition.id }}/documents"
-              hx-target="#categories-area" hx-encoding="multipart/form-data"
-              hx-on::after-request="closeModal('docs-modal')">
+              hx-target="#upload-preview" hx-encoding="multipart/form-data">
             <input type="file" name="files" accept=".xlsx,.xlsm" multiple required>
+            <div id="upload-preview"></div>
             <div class="flex" style="justify-content:flex-end; margin-top:1rem;">
                 <button type="button" class="secondary" onclick="closeModal('docs-modal')">Anuluj</button>
-                <button type="submit">Wgraj</button>
+                <button type="submit" name="mode" value="preview">Sprawdź plik</button>
             </div>
         </form>
     </div>

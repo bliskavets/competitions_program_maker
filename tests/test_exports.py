@@ -4,8 +4,8 @@ import io
 from openpyxl import load_workbook
 
 from app.services.brackets import build_empty_bracket, build_initial_bracket
-from app.services.exports_excel import render_bracket_xlsx
-from app.services.exports_pdf import render_bracket_pdf
+from app.services.exports_excel import render_bracket_xlsx, render_results_xlsx
+from app.services.exports_pdf import render_bracket_pdf, render_results_pdf
 
 
 def _people(n):
@@ -47,3 +47,14 @@ def test_empty_bracket_export():
     bracket = build_empty_bracket(12)
     assert render_bracket_xlsx(bracket, title="empty")[:2] == b"PK"  # xlsx = zip
     assert render_bracket_pdf(bracket, title="empty")[:4] == b"%PDF"
+
+
+def test_announcer_results_export():
+    standings = [
+        {"place": 1, "name": "Łukasz Żółć"},
+        {"place": 2, "name": "Jan Nowak"},
+    ]
+    xlsx = render_results_xlsx(standings, title="Wyniki")
+    workbook = load_workbook(io.BytesIO(xlsx))
+    assert workbook.active["B4"].value == "Łukasz Żółć"
+    assert render_results_pdf(standings, title="Wyniki")[:4] == b"%PDF"

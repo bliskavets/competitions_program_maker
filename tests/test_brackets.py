@@ -78,6 +78,21 @@ def test_round_robin_table_shows_opponents():
         assert rows[opp - 1]["cells"][r_idx] == 1
 
 
+def test_round_robin_protocol_has_one_column_per_real_fight():
+    group = build_initial_bracket(_people(5))["groups"][0]
+    assert group["num_bouts"] == 10
+    assert len(group["bouts"]) == 10
+    assert all(len(row["fight_cells"]) == 10 for row in group["rows"])
+    # Exactly two cells are occupied in each fight column and by reciprocal opponents.
+    for column, bout in enumerate(group["bouts"]):
+        occupied = [
+            (row["lp"], row["fight_cells"][column])
+            for row in group["rows"]
+            if row["fight_cells"][column] is not None
+        ]
+        assert set(occupied) == {(bout["a"], bout["b"]), (bout["b"], bout["a"])}
+
+
 def test_round_robin_odd_marks_bye_in_cells():
     b = build_initial_bracket(_people(5))
     rows = b["groups"][0]["rows"]

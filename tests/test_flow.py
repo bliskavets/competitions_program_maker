@@ -35,6 +35,10 @@ def test_full_flow(client):
     comp_url = r.headers["location"]
     comp_id = int(comp_url.rstrip("/").split("/")[-1])
 
+    template = client.get(f"/competitions/{comp_id}/import-template.xlsx")
+    assert template.status_code == 200
+    assert load_workbook(io.BytesIO(template.content))["Instrukcja"]["A1"].value == "Import uczestników"
+
     # upload documents
     r = client.post(
         f"/competitions/{comp_id}/documents",
@@ -103,6 +107,42 @@ def test_permissions_block_stranger(client):
     register(other, "intruder", email="intruder@x.pl")
     r = other.get(f"/competitions/{comp_id}", follow_redirects=False)
     assert r.status_code == 403
+
+
+def test_document_preview_does_not_import_until_confirmation(client):
+    _logged_in(client)
+    response = client.post("/competitions", data={"name": "Preview"}, follow_redirects=False)
+    comp_id = int(response.headers["location"].rstrip("/").split("/")[-1])
+    preview = client.post(
+        f"/competitions/{comp_id}/documents",
+        data={"mode": "preview"},
+        files={
+            "files": (
+                "kadeci.xlsx",
+                _sample_xlsx(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+    assert preview.status_code == 200
+    assert "7 uczestników" in preview.text
+    assert "Potwierdź i zaimportuj" in preview.text
+    assert "Kadeci" not in client.get(f"/competitions/{comp_id}").text
+
+    imported = client.post(
+        f"/competitions/{comp_id}/documents",
+        data={"mode": "import"},
+        files={
+            "files": (
+                "kadeci.xlsx",
+                _sample_xlsx(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+    assert imported.status_code == 200
+    assert "Wczytano uczestników" in imported.text
+    assert "Kadeci" in client.get(f"/competitions/{comp_id}").text
 
 
 def test_share_grants_access(client):

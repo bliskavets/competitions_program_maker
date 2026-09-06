@@ -1,17 +1,19 @@
 """Document upload, age categories and weight categories."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import Rights, ensure, require_user, rights_for
 from app.models import AgeCategory, Competition, User, WeightCategory
-from app.services.excel_import import import_workbook
+from app.services.excel_import import import_workbook, preview_workbook
+from app.services.excel_template import render_import_template
 from app.templating import templates
 
 router = APIRouter()
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def load_age(
@@ -46,11 +48,30 @@ def load_weight(
 # ---- documents upload ----
 
 
+@router.get("/competitions/{competition_id}/import-template.xlsx")
+async def download_import_template(
+    competition_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+):
+    comp = db.get(Competition, competition_id)
+    if comp is None:
+        raise HTTPException(404, "Zawody nie istnieją")
+    rights = rights_for(db, user, comp)
+    ensure(rights.can_read)
+    return Response(
+        render_import_template(comp),
+        media_type=XLSX_MIME,
+        headers={"Content-Disposition": 'attachment; filename="szablon_uczestnikow.xlsx"'},
+    )
+
+
 @router.post("/competitions/{competition_id}/documents", response_class=HTMLResponse)
 async def upload_documents(
     request: Request,
     competition_id: int,
     files: list[UploadFile] = [],  # noqa: B006 - FastAPI form binding
+    mode: str = Form("import"),
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
 ):
@@ -62,6 +83,7 @@ async def upload_documents(
 
     total = 0
     errors: list[str] = []
+    file_data: list[tuple[str, bytes]] = []
     for f in files:
         if not f.filename:
             continue
@@ -69,13 +91,46 @@ async def upload_documents(
             errors.append(f"{f.filename}: nieobsługiwany format (wymagany .xlsx)")
             continue
         data = await f.read()
+        file_data.append((f.filename, data))
+
+    if mode == "preview":
+        allowed = {
+            (age.name or "").casefold(): {
+                (category.name or "").casefold()
+                for category in age.weight_categories
+                if category.name and not category.is_auto_grouped
+            }
+            for age in comp.age_categories
+        }
+        previews = []
+        for filename, data in file_data:
+            try:
+                sheets = preview_workbook(data, allowed_categories=allowed)
+                if not sheets:
+                    errors.append(f"{filename}: nie znaleziono arkusza uczestników")
+                previews.append({"filename": filename, "sheets": sheets})
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{filename}: {exc}")
+        return templates.TemplateResponse(
+            "partials/upload_preview.html",
+            {"request": request, "previews": previews, "errors": errors},
+        )
+
+    for filename, data in file_data:
         try:
             total += import_workbook(db, comp, data)
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"{f.filename}: {exc}")
+            db.rollback()
+            errors.append(f"{filename}: {exc}")
 
     db.refresh(comp)
-    return templates.TemplateResponse(
+    review_count = sum(
+        1
+        for age in comp.age_categories
+        for category in age.weight_categories
+        if category.needs_review
+    )
+    response = templates.TemplateResponse(
         "partials/upload_result.html",
         {
             "request": request,
@@ -84,8 +139,12 @@ async def upload_documents(
             "competition": comp,
             "rights": rights,
             "age_categories": comp.age_categories,
+            "review_count": review_count,
         },
     )
+    response.headers["HX-Retarget"] = "#categories-area"
+    response.headers["HX-Trigger"] = "documentsImported"
+    return response
 
 
 # ---- age categories ----
@@ -132,10 +191,15 @@ async def delete_age_category(
 @router.get("/age-categories/{age_category_id}", response_class=HTMLResponse)
 async def age_category_page(
     request: Request,
+    review_only: bool = Query(False),
     loaded: tuple = Depends(load_age),
     user: User = Depends(require_user),
 ):
     age, comp, rights = loaded
+    categories = list(age.weight_categories)
+    problem_count = sum(1 for category in categories if category.needs_review)
+    if review_only:
+        categories = [category for category in categories if category.needs_review]
     return templates.TemplateResponse(
         "age_category.html",
         {
@@ -144,7 +208,9 @@ async def age_category_page(
             "competition": comp,
             "age": age,
             "rights": rights,
-            "weight_categories": age.weight_categories,
+            "weight_categories": categories,
+            "review_only": review_only,
+            "problem_count": problem_count,
         },
     )
 

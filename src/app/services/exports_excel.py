@@ -68,12 +68,81 @@ def render_bracket_xlsx(
     return buf.getvalue()
 
 
+def render_results_xlsx(standings: list[dict[str, Any]], *, title: str = "") -> bytes:
+    """Render the completed classification as a compact announcer sheet."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Wyniki"
+    _setup_a4(ws)
+    ws.page_setup.orientation = "portrait"
+    row = 1
+    if title:
+        ws.cell(row=row, column=1, value=title).font = Font(bold=True, size=14)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
+        row += 2
+    for column, value in enumerate(("M-ce", "Nazwisko i imię"), start=1):
+        cell = ws.cell(row=row, column=column, value=value)
+        cell.font = BOLD
+        cell.fill = HEADER_FILL
+        cell.border = BORDER
+        cell.alignment = CENTER
+    for item in standings:
+        row += 1
+        values = (item.get("place"), item.get("name"))
+        for column, value in enumerate(values, start=1):
+            cell = ws.cell(row=row, column=column, value=value)
+            cell.border = BORDER
+            cell.alignment = LEFT if column == 2 else CENTER
+    ws.column_dimensions["A"].width = 10
+    ws.column_dimensions["B"].width = 42
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def render_competition_results_xlsx(
+    rows: list[dict[str, Any]], *, title: str = ""
+) -> bytes:
+    """Render all completed category classifications in one workbook."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Wyniki zawodów"
+    _setup_a4(ws)
+    row_number = 1
+    if title:
+        ws.cell(row=row_number, column=1, value=title).font = Font(bold=True, size=14)
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+        row_number += 2
+    headers = ("Kategoria wiekowa", "Kategoria wagowa", "M-ce", "Nazwisko i imię")
+    for column, value in enumerate(headers, start=1):
+        cell = ws.cell(row=row_number, column=column, value=value)
+        cell.font, cell.fill, cell.border, cell.alignment = BOLD, HEADER_FILL, BORDER, CENTER
+    for row in rows:
+        row_number += 1
+        values = (row.get("age"), row.get("weight"), row.get("place"), row.get("name"))
+        for column, value in enumerate(values, start=1):
+            cell = ws.cell(row=row_number, column=column, value=value)
+            cell.border = BORDER
+            cell.alignment = CENTER if column == 3 else LEFT
+    for column, width in zip("ABCD", (22, 24, 9, 36)):
+        ws.column_dimensions[column].width = width
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def _render_round_robin(
     ws: Worksheet, group: dict[str, Any], start: int, judging: bool
 ) -> int:
-    num_rounds = max(int(group.get("num_rounds", 0)), 1)
+    num_bouts = len(group.get("bouts") or [])
+    has_rest = any(row.get("rest_round") for row in group.get("rows", []))
     headers = ["Lp.", "Nazwisko i imię", "Rok", "Klub"]
-    headers += [str(i) for i in range(1, num_rounds + 1)]
+    headers += [
+        f"Walka {bout.get('sequence', index)}\n{bout.get('a', '')}–{bout.get('b', '')}"
+        for index, bout in enumerate(group.get("bouts") or [], start=1)
+    ]
+    if has_rest:
+        headers.append("wl")
     headers += ["suma PKT", "M-ce"]
     if judging:
         headers.append("Win")
@@ -88,16 +157,16 @@ def _render_round_robin(
     r += 1
 
     for row_data in group.get("rows", []):
-        # round columns show the opponent's position (or "wl" for the bye)
-        cells = row_data.get("cells") or [None] * num_rounds
-        round_cells = ["wl" if o is None else o for o in cells]
+        fight_cells = row_data.get("fight_cells") or [None] * num_bouts
         values = [
             row_data.get("lp"),
             row_data.get("name"),
             row_data.get("year"),
             row_data.get("team"),
         ]
-        values += round_cells
+        values += fight_cells
+        if has_rest:
+            values.append(row_data.get("rest_round"))
         values += [None, None]  # suma PKT, M-ce
         if judging:
             values.append(None)
@@ -105,8 +174,7 @@ def _render_round_robin(
             cell = ws.cell(row=r, column=c, value=v)
             cell.border = BORDER
             cell.alignment = LEFT if c == 2 else CENTER
-            # grey out the bye ("wl") cell
-            if 5 <= c <= 4 + num_rounds and v == "wl":
+            if has_rest and c == 5 + num_bouts:
                 cell.fill = REST_FILL
         r += 1
     return r

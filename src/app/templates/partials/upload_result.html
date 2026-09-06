@@ -1,4 +1,9 @@
 <div class="message ok">Wczytano uczestników: <strong>{{ added }}</strong>.</div>
+{% if review_count %}
+<div class="message warning">
+    <strong>{{ review_count }}</strong> grup wymaga ręcznego sprawdzenia (liczba uczestników, brak wagi lub rozpiętość powyżej 3 kg).
+</div>
+{% endif %}
 {% if errors %}
 <div class="message error">
     <strong>Problemy:</strong>

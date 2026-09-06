@@ -43,7 +43,8 @@
                                 <th>Lp.</th>
                                 {% if editable %}<th>Nr</th>{% endif %}
                                 <th>Nazwisko i imię</th><th>Rok</th><th>Klub</th>
-                                {% for i in range(1, g.num_rounds + 1) %}<th class="center">{{ i }}</th>{% endfor %}
+                                {% for bout in g.bouts %}<th class="center" title="Runda {{ bout.round }}"><span class="fight-heading">Walka {{ bout.sequence }}<small>{{ bout.a }}–{{ bout.b }}</small></span></th>{% endfor %}
+                                {% if g.rows | selectattr('rest_round') | list | length %}<th class="center">wl</th>{% endif %}
                                 <th>suma PKT</th><th>M-ce</th>
                             </tr>
                         </thead>
@@ -61,21 +62,18 @@
                                            {% if not rights.can_update %}readonly{% endif %}></td>
                                 <td><input value="{{ row.team or '' }}" data-edit="team"
                                            {% if not rights.can_update %}readonly{% endif %}></td>
-                                {% for cell in row.cells %}
-                                    {% if cell is none %}
-                                        <td class="rest">wl</td>
-                                    {% else %}
-                                        <td class="center pair">{{ cell }}</td>
-                                    {% endif %}
+                                {% for cell in row.fight_cells %}
+                                    <td class="center pair">{{ cell if cell is not none else '' }}</td>
                                 {% endfor %}
+                                {% if g.rows | selectattr('rest_round') | list | length %}<td class="rest">{{ row.rest_round or '' }}</td>{% endif %}
                                 <td></td><td></td>
                             </tr>
                             {% endfor %}
                         </tbody>
                     </table>
                     <p class="muted" style="font-size:0.82rem;">
-                        System kołowy „każdy z każdym”. Liczba w kolumnie rundy = <strong>numer (Lp) przeciwnika</strong>
-                        w tej rundzie; „wl” = wolny los (odpoczynek).
+                        System kołowy „każdy z każdym”. Każda kolumna W to jedna walka;
+                        liczba w komórce oznacza numer (Lp.) przeciwnika. „wl” wskazuje rundę wolnego losu.
                     </p>
 
                 {% elif g.type == 'single_elim' %}
@@ -126,6 +124,72 @@
             {% endif %}
         </div>
 
+        {% if results and results.bouts %}
+        <section class="results-panel">
+            <div class="flex" style="justify-content:space-between; align-items:center;">
+                <h4>Wyniki online</h4>
+                <span class="muted">Kliknij zwycięzcę każdej gotowej walki.</span>
+            </div>
+            <div class="bout-list">
+            {% for bout in results.bouts %}
+                <div class="bout-row{% if bout.winner_id %} complete{% endif %}">
+                    <span class="bout-number">
+                        {% if bout.stage == 'group' %}{{ bout.group_name }} · W{{ bout.sequence }}
+                        {% elif bout.stage == 'group_knockout' %}{{ bout.group_name }} · {{ bout.key.split('-')[-2:] | join(' ') }}
+                        {% elif bout.stage == 'semifinal' %}Półfinał
+                        {% else %}Finał{% endif %}
+                    </span>
+                    {% if bout.ready %}
+                        {% for pid, name in [(bout.player_a_id, bout.player_a), (bout.player_b_id, bout.player_b)] %}
+                        <form hx-post="/bouts/{{ bout.id }}/winner" hx-target="#round-form-area">
+                            <input type="hidden" name="winner_id" value="{{ pid }}">
+                            <button type="submit" class="bout-player{% if bout.winner_id == pid %} selected{% endif %}"
+                                    {% if not rights.can_update %}disabled{% endif %}>{{ name }}</button>
+                        </form>
+                        {% endfor %}
+                        {% if bout.winner_id and rights.can_update %}
+                        <form hx-post="/bouts/{{ bout.id }}/winner" hx-target="#round-form-area">
+                            <input type="hidden" name="winner_id" value="">
+                            <button type="submit" class="ghost compact">Cofnij</button>
+                        </form>
+                        {% endif %}
+                    {% elif bout.status == 'automatic' %}
+                        <span>{{ bout.player_a if bout.player_a_id else bout.player_b }} — wolny los</span>
+                    {% else %}
+                        <span class="muted">oczekuje na zawodników</span>
+                    {% endif %}
+                </div>
+            {% endfor %}
+            </div>
+
+            {% for group in results.groups %}
+            {% if group.ranking and group.ranking[0].wins is not none %}
+            <h4>Tabela {% if group.name != 'S' %}grupy {{ group.name }}{% else %}bieżąca{% endif %}</h4>
+            <table class="results-table">
+                <thead><tr><th>Lokata</th><th>Nazwisko i imię</th><th>PKT</th></tr></thead>
+                <tbody>
+                {% for row in group.ranking %}
+                    <tr><td class="center">{{ row.place }}</td><td>{{ row.name }}</td><td class="center">{{ row.wins }}</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+            {% endfor %}
+
+            {% if results.standings %}
+            <h4>Klasyfikacja końcowa</h4>
+            <table class="results-table">
+                <thead><tr><th>M-ce</th><th>Nazwisko i imię</th></tr></thead>
+                <tbody>
+                {% for row in results.standings %}
+                    <tr><td class="center">{{ row.place }}</td><td>{{ row.name }}</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+        </section>
+        {% endif %}
+
         <div class="export-bar">
             {% if editable %}
             <button type="button" class="secondary" onclick="fillup({{ round.id }})">⤵ Fillup</button>
@@ -137,6 +201,10 @@
             <a class="btn secondary" href="/rounds/{{ round.id }}/pdf">⬇ Download as PDF</a>
             <a class="btn ghost" href="/rounds/{{ round.id }}/excel-judgement">⬇ Excel (sędziowanie)</a>
             <a class="btn ghost" href="/rounds/{{ round.id }}/pdf-judgement">⬇ PDF (sędziowanie)</a>
+            {% if results and results.standings %}
+            <a class="btn secondary" href="/rounds/{{ round.id }}/results/excel">⬇ Wyniki Excel</a>
+            <a class="btn secondary" href="/rounds/{{ round.id }}/results/pdf">⬇ Wyniki PDF</a>
+            {% endif %}
         </div>
     {% endif %}
 </div>

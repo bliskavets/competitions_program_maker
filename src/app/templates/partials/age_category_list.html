@@ -7,7 +7,11 @@
     <li>
         <div class="row-main" onclick="document.location='/age-categories/{{ ac.id }}'">
             <strong>{{ ac.name or ('Kategoria #' ~ ac.id) }}</strong>
-            <div class="muted">{{ ac.weight_categories|length }} kat. wagowych</div>
+            <div class="muted">
+                {{ ac.weight_categories|length }} kat. wagowych
+                {% set review = ac.weight_categories|selectattr('needs_review')|list|length %}
+                {% if review %}<span class="badge warning">{{ review }} do sprawdzenia</span>{% endif %}
+            </div>
         </div>
         <div class="row-actions">
             {% if rights.can_delete %}

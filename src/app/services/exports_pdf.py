@@ -116,10 +116,97 @@ def render_bracket_pdf(
     return buf.getvalue()
 
 
+def render_results_pdf(standings: list[dict[str, Any]], *, title: str = "") -> bytes:
+    """Render the completed classification as a compact announcer sheet."""
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=18 * mm,
+        bottomMargin=18 * mm,
+    )
+    styles = getSampleStyleSheet()
+    styles["Title"].fontName = FONT_BOLD
+    story: list[Any] = []
+    if title:
+        story.extend([Paragraph(title, styles["Title"]), Spacer(1, 5 * mm)])
+    data = [["M-ce", "Nazwisko i imię"]]
+    data.extend([[row.get("place"), row.get("name", "")] for row in standings])
+    table = Table(data, colWidths=[25 * mm, doc.width - 25 * mm], repeatRows=1)
+    table.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                ("BACKGROUND", (0, 0), (-1, 0), HEADER_COLOR),
+                ("FONTNAME", (0, 0), (-1, -1), FONT),
+                ("FONTNAME", (0, 0), (-1, 0), FONT_BOLD),
+                ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                ("FONTSIZE", (0, 0), (-1, -1), 11),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    story.append(table)
+    doc.build(story)
+    return buf.getvalue()
+
+
+def render_competition_results_pdf(
+    rows: list[dict[str, Any]], *, title: str = ""
+) -> bytes:
+    """Render all completed category classifications in one PDF."""
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=landscape(A4),
+        leftMargin=10 * mm,
+        rightMargin=10 * mm,
+        topMargin=12 * mm,
+        bottomMargin=12 * mm,
+    )
+    styles = getSampleStyleSheet()
+    styles["Title"].fontName = FONT_BOLD
+    story: list[Any] = []
+    if title:
+        story.extend([Paragraph(title, styles["Title"]), Spacer(1, 4 * mm)])
+    data = [["Kategoria wiekowa", "Kategoria wagowa", "M-ce", "Nazwisko i imię"]]
+    data.extend(
+        [[row.get("age"), row.get("weight"), row.get("place"), row.get("name", "")] for row in rows]
+    )
+    widths = [45 * mm, 55 * mm, 18 * mm, doc.width - 118 * mm]
+    table = Table(data, colWidths=widths, repeatRows=1)
+    table.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                ("BACKGROUND", (0, 0), (-1, 0), HEADER_COLOR),
+                ("FONTNAME", (0, 0), (-1, -1), FONT),
+                ("FONTNAME", (0, 0), (-1, 0), FONT_BOLD),
+                ("ALIGN", (2, 0), (2, -1), "CENTER"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    story.append(table)
+    doc.build(story)
+    return buf.getvalue()
+
+
 def _round_robin_table(group: dict[str, Any], avail: float, judging: bool) -> Table:
-    num_rounds = max(int(group.get("num_rounds", 0)), 1)
+    num_bouts = len(group.get("bouts") or [])
+    has_rest = any(row.get("rest_round") for row in group.get("rows", []))
     headers = ["Lp.", "Nazwisko i imię", "Rok", "Klub"]
-    headers += [str(i) for i in range(1, num_rounds + 1)]
+    headers += [
+        f"Walka {bout.get('sequence', index)}\n{bout.get('a', '')}–{bout.get('b', '')}"
+        for index, bout in enumerate(group.get("bouts") or [], start=1)
+    ]
+    if has_rest:
+        headers.append("wl")
     headers += ["suma\nPKT", "M-ce"]
     if judging:
         headers.append("Win")
@@ -127,27 +214,27 @@ def _round_robin_table(group: dict[str, Any], avail: float, judging: bool) -> Ta
     data = [headers]
     rest_cells: list[tuple[int, int]] = []
     for ridx, row in enumerate(group.get("rows", []), start=1):
-        opponents = row.get("cells") or [None] * num_rounds
-        round_cells = ["wl" if o is None else o for o in opponents]
+        fight_cells = row.get("fight_cells") or [None] * num_bouts
         cells = [
             row.get("lp"),
             row.get("name"),
             row.get("year"),
             row.get("team") or "",
         ]
-        cells += round_cells
+        cells += fight_cells
+        if has_rest:
+            cells.append(row.get("rest_round") or "")
         cells += ["", ""]
         if judging:
             cells.append("")
-        for ci, val in enumerate(round_cells):
-            if val == "wl":
-                rest_cells.append((4 + ci, ridx))  # 0-based; rounds start at col 4
+        if has_rest:
+            rest_cells.append((4 + num_bouts, ridx))
         data.append(cells)
 
     # column widths
     fixed = [10 * mm, 48 * mm, 12 * mm, 30 * mm]
     rest_w = avail - sum(fixed)
-    n_small = num_rounds + 2 + (1 if judging else 0)
+    n_small = num_bouts + (1 if has_rest else 0) + 2 + (1 if judging else 0)
     small_w = max(rest_w / max(n_small, 1), 8 * mm)
     col_widths = fixed + [small_w] * n_small
 

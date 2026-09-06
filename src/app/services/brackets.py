@@ -18,9 +18,51 @@ rendered by templates, Excel and PDF exporters alike.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 ROUND_ROBIN_MAX = 5  # groups with <= this many wrestlers use round-robin
+
+
+def normalize_bracket(bracket: dict[str, Any]) -> dict[str, Any]:
+    """Return a current-format copy of a bracket saved by any app version."""
+    result = deepcopy(bracket)
+    groups = result.get("groups") or []
+    if not groups and result.get("type") == "round_robin":
+        groups = [result]
+    for group in groups:
+        if group.get("type") != "round_robin":
+            continue
+        bouts = group.get("bouts")
+        if bouts is None:
+            bouts = []
+            for round_idx, pairs in enumerate(group.get("schedule") or [], start=1):
+                for pair in pairs:
+                    a, b = pair.get("a"), pair.get("b")
+                    if a is None or b is None:
+                        continue
+                    bouts.append(
+                        {
+                            "sequence": len(bouts) + 1,
+                            "round": round_idx,
+                            "a": a,
+                            "b": b,
+                        }
+                    )
+            group["bouts"] = bouts
+        group["num_bouts"] = len(bouts)
+        for row in group.get("rows") or []:
+            lp = row.get("lp")
+            if "fight_cells" not in row:
+                row["fight_cells"] = [
+                    bout["b"]
+                    if bout["a"] == lp
+                    else bout["a"]
+                    if bout["b"] == lp
+                    else None
+                    for bout in bouts
+                ]
+    return result
 
 
 def round_robin_rounds(n: int) -> list[list[tuple[int | None, int | None]]]:
@@ -65,10 +107,11 @@ def round_robin_table(participants: list[dict[str, Any]]) -> dict[str, Any]:
     """Build a round-robin sheet structure for a single group.
 
     ``participants`` is a list of dicts (number, name, year, team, other...).
-    For every wrestler (row) and every round (column) the table records the
-    *opponent's* position (``cells``), or ``None`` when the wrestler rests that
-    round (rendered as ``wl``). This mirrors the "Kategoria wagowa" pairing grid
-    of the printed sheet, where you can read who fights whom in each round.
+    ``cells`` retains the legacy opponent-per-round representation because old
+    saved brackets may still use it.  The printable protocol uses ``bouts`` and
+    ``fight_cells`` instead: every real bout gets one column and only the two
+    involved wrestlers have an opponent number in that column.  A bye is kept
+    separately in ``rest_round`` and never becomes a fake bout.
     """
     n = len(participants)
     schedule = round_robin_rounds(n)
@@ -84,6 +127,20 @@ def round_robin_table(participants: list[dict[str, Any]]) -> dict[str, Any]:
                 opponent[a][r_idx] = b
                 opponent[b][r_idx] = a
 
+    bouts: list[dict[str, int]] = []
+    for round_idx, pairs in enumerate(schedule, start=1):
+        for a, b in pairs:
+            if a is None or b is None:
+                continue
+            bouts.append(
+                {
+                    "sequence": len(bouts) + 1,
+                    "round": round_idx,
+                    "a": a,
+                    "b": b,
+                }
+            )
+
     rows = []
     for idx, p in enumerate(participants, start=1):
         cells = opponent[idx]
@@ -92,11 +149,21 @@ def round_robin_table(participants: list[dict[str, Any]]) -> dict[str, Any]:
             {
                 "lp": idx,
                 "number": p.get("number"),
+                "participant_id": p.get("id") or p.get("participant_id"),
                 "name": p.get("name", ""),
                 "year": p.get("year") or p.get("birth_year"),
                 "team": p.get("team"),
                 "other": p.get("other") or p.get("other_info"),
+                "actual_weight": p.get("actual_weight"),
                 "cells": cells,  # opponent position per round (None = bye/wl)
+                "fight_cells": [
+                    bout["b"]
+                    if bout["a"] == idx
+                    else bout["a"]
+                    if bout["b"] == idx
+                    else None
+                    for bout in bouts
+                ],
                 "rest_round": rest,
             }
         )
@@ -106,8 +173,10 @@ def round_robin_table(participants: list[dict[str, Any]]) -> dict[str, Any]:
         "type": "round_robin",
         "num_participants": n,
         "num_rounds": num_rounds,
+        "num_bouts": len(bouts),
         "rows": rows,
         "schedule": sched_json,
+        "bouts": bouts,
     }
 
 
@@ -217,9 +286,11 @@ def build_initial_bracket(participants: list[dict[str, Any]]) -> dict[str, Any]:
                     "rows": [
                         {
                             "lp": i + 1,
+                            "participant_id": p.get("id") or p.get("participant_id"),
                             "name": p.get("name", ""),
                             "year": p.get("year") or p.get("birth_year"),
                             "team": p.get("team"),
+                            "actual_weight": p.get("actual_weight"),
                         }
                         for i, p in enumerate(members)
                     ],

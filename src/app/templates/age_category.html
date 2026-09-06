@@ -24,15 +24,31 @@
 {% endif %}
 
 <h2>Kategorie wagowe</h2>
+{% if problem_count %}
+<div class="message warning">
+    <strong>{{ problem_count }}</strong> grup wymaga decyzji przed utworzeniem ostatecznych drabinek.
+    {% if review_only %}<a href="/age-categories/{{ age.id }}">Pokaż wszystkie</a>
+    {% else %}<a href="/age-categories/{{ age.id }}?review_only=1">Filtr: wymaga rozwiązania</a>{% endif %}
+</div>
+{% endif %}
 {% if not weight_categories %}
     <div class="card">Brak kategorii wagowych.</div>
 {% endif %}
 <ul class="list">
     {% for wc in weight_categories %}
-    <li>
+    <li class="{% if wc.needs_review %}needs-review{% endif %}">
         <div class="row-main" onclick="document.location='/weight-categories/{{ wc.id }}'">
             <strong>{{ wc.name or (wc.weight ~ ' kg') }}</strong>
             <div class="muted">{{ wc.participants|length }} uczestników</div>
+            {% if wc.needs_review and wc.participants|length == 1 %}
+                <span class="badge danger">Oдин участник / Pojedynczy uczestnik</span>
+            {% elif wc.needs_review and wc.is_auto_grouped and wc.participants|selectattr('actual_weight', 'none')|list|length %}
+                <span class="badge danger">Błąd danych: brak wagi</span>
+            {% elif wc.needs_review %}
+                <span class="badge warning">Wymaga sprawdzenia</span>
+            {% else %}
+                <span class="badge ok">Gotowa grupa</span>
+            {% endif %}
         </div>
         <div class="row-actions">
             {% if rights.can_delete %}

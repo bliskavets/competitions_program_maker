@@ -14,7 +14,7 @@ os.environ["EMAIL_BACKEND"] = "console"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.database import Base, engine  # noqa: E402
+from app.database import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 
 
@@ -28,6 +28,15 @@ def _fresh_db():
 @pytest.fixture
 def client():
     return TestClient(app)
+
+
+@pytest.fixture
+def db_session():
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 def register(client: TestClient, login="jan", email=None, password="haslo123"):

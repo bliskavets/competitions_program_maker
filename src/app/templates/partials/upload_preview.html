@@ -1,0 +1,28 @@
+{% if errors %}
+<div class="message error"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>
+{% endif %}
+{% for file in previews %}
+<h4>{{ file.filename }}</h4>
+{% for sheet in file.sheets %}
+<div class="import-preview{% if sheet.issues %} needs-review{% endif %}">
+    <strong>{{ sheet.age_category }}</strong> — {{ sheet.participant_count }} uczestników
+    <ul>
+    {% for group in sheet.groups %}
+        <li>
+            {{ group.name }}: {{ group.count }}
+            {% if group.needs_review %}<span class="badge warning">wymaga decyzji</span>{% endif %}
+            {% if group.members %}<span class="muted">({{ group.members | join(', ') }})</span>{% endif %}
+        </li>
+    {% endfor %}
+    </ul>
+    {% if sheet.issues %}
+    <div class="message warning"><ul>{% for issue in sheet.issues %}<li>{{ issue }}</li>{% endfor %}</ul></div>
+    {% endif %}
+</div>
+{% endfor %}
+{% endfor %}
+{% if previews and not errors %}
+<div class="flex" style="justify-content:flex-end; margin-top:1rem;">
+    <button type="submit" name="mode" value="import">Potwierdź i zaimportuj</button>
+</div>
+{% endif %}

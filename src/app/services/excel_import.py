@@ -13,17 +13,20 @@ from __future__ import annotations
 import io
 import re
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
 from app.models import AgeCategory, Competition, Participant, WeightCategory
+from app.services.child_grouping import group_children, is_children_category
 
 REQUIRED = {
     "name": ("name and surname", "name", "nazwisko i imię", "imię i nazwisko"),
     "year": ("year of birth", "rok", "rok urodzenia"),
     "weight": ("weight category", "weight", "kategoria wagowa", "waga"),
+    "actual_weight": ("actual weight", "measured weight", "waga rzeczywista", "waga faktyczna"),
     "team": ("team", "klub", "drużyna"),
 }
 
@@ -46,9 +49,11 @@ def _match_columns(header: list[Any]) -> dict[str, int]:
 
 @dataclass
 class ParsedParticipant:
+    row_number: int
     name: str
     year: int | None
     weight: str
+    actual_weight: Decimal | None
     team: str | None
     other: dict[str, Any] = field(default_factory=dict)
 
@@ -73,12 +78,15 @@ def parse_workbook(data: bytes) -> list[ParsedSheet]:
             # Not a participant sheet (e.g. metadata) — skip.
             continue
         participants: list[ParsedParticipant] = []
-        for raw in rows[1:]:
+        for row_number, raw in enumerate(rows[1:], start=2):
             row = list(raw)
             name = _cell(row, cols.get("name"))
             if not name or not str(name).strip():
                 continue
             weight = _cell(row, cols.get("weight"))
+            actual_weight = _cell(row, cols.get("actual_weight"))
+            if actual_weight in (None, "") and is_children_category(ws.title):
+                actual_weight = weight
             other = {}
             for i, value in enumerate(row):
                 if i not in cols.values() and value not in (None, ""):
@@ -86,9 +94,11 @@ def parse_workbook(data: bytes) -> list[ParsedSheet]:
                     other[key] = value
             participants.append(
                 ParsedParticipant(
+                    row_number=row_number,
                     name=str(name).strip(),
                     year=_to_int(_cell(row, cols.get("year"))),
                     weight=str(weight).strip() if weight is not None else "",
+                    actual_weight=_to_decimal(actual_weight),
                     team=_opt_str(_cell(row, cols.get("team"))),
                     other=other,
                 )
@@ -99,12 +109,92 @@ def parse_workbook(data: bytes) -> list[ParsedSheet]:
     return sheets
 
 
+def preview_workbook(
+    data: bytes,
+    *,
+    allowed_categories: dict[str, set[str]] | None = None,
+) -> list[dict[str, Any]]:
+    """Describe the import without mutating the database."""
+    preview: list[dict[str, Any]] = []
+    allowed_categories = allowed_categories or {}
+    for sheet in parse_workbook(data):
+        issues: list[str] = []
+        groups: list[dict[str, Any]] = []
+        if is_children_category(sheet.age_category):
+            for participant in sheet.participants:
+                if participant.actual_weight is None:
+                    issues.append(
+                        f"Wiersz {participant.row_number}: {participant.name} — brak lub nieprawidłowa waga."
+                    )
+            for group in group_children(sheet.participants):
+                groups.append(
+                    {
+                        "name": group.name,
+                        "count": len(group.members),
+                        "needs_review": group.needs_review,
+                        "members": [member.name for member in group.members],
+                    }
+                )
+        else:
+            counts: dict[str, int] = {}
+            allowed = allowed_categories.get(sheet.age_category.casefold(), set())
+            for participant in sheet.participants:
+                label = participant.weight.strip()
+                if not label:
+                    issues.append(
+                        f"Wiersz {participant.row_number}: {participant.name} — brak kategorii wagowej."
+                    )
+                    continue
+                if allowed and label.casefold() not in allowed:
+                    issues.append(
+                        f"Wiersz {participant.row_number}: {participant.name} — kategoria „{label}” nie występuje na skonfigurowanej liście."
+                    )
+                counts[label] = counts.get(label, 0) + 1
+            groups = [
+                {"name": label, "count": count, "needs_review": False, "members": []}
+                for label, count in counts.items()
+            ]
+        preview.append(
+            {
+                "age_category": sheet.age_category,
+                "participant_count": len(sheet.participants),
+                "groups": groups,
+                "issues": issues,
+            }
+        )
+    return preview
+
+
 def import_workbook(db: Session, competition: Competition, data: bytes) -> int:
     """Parse and persist a workbook into the competition. Returns count added."""
     sheets = parse_workbook(data)
     added = 0
     for sheet in sheets:
         age = _get_or_create_age_category(db, competition, sheet.age_category)
+        if is_children_category(sheet.age_category):
+            _import_children_sheet(db, age, sheet.participants)
+            added += len(sheet.participants)
+            db.flush()
+            continue
+        allowed = {
+            (category.name or "").strip().casefold()
+            for category in age.weight_categories
+            if category.name and not category.is_auto_grouped
+        }
+        if allowed:
+            invalid = [
+                participant
+                for participant in sheet.participants
+                if participant.weight.strip().casefold() not in allowed
+            ]
+            if invalid:
+                details = ", ".join(
+                    f"wiersz {participant.row_number}: {participant.weight or 'brak'}"
+                    for participant in invalid[:5]
+                )
+                raise ValueError(
+                    f"{sheet.age_category}: kategoria spoza skonfigurowanej listy ({details})"
+                )
         for p in sheet.participants:
             weight = _get_or_create_weight_category(db, age, p.weight)
             other_text = (
@@ -117,12 +207,41 @@ def import_workbook(db: Session, competition: Competition, data: bytes) -> int:
                     birth_year=p.year,
                     team=p.team,
                     other_info=other_text,
+                    actual_weight=p.actual_weight,
                 )
             )
             added += 1
         db.flush()
     db.commit()
     return added
+
+
+def _import_children_sheet(
+    db: Session, age: AgeCategory, participants: list[ParsedParticipant]
+) -> None:
+    """Persist one children sheet using the 4/5-person grouping policy."""
+    for group in group_children(participants):
+        category = WeightCategory(
+            age_category_id=age.id,
+            name=group.name,
+            weight=group.representative_weight,
+            is_auto_grouped=True,
+            needs_review=group.needs_review,
+        )
+        db.add(category)
+        db.flush()
+        for p in group.members:
+            other_text = "; ".join(f"{k}: {v}" for k, v in p.other.items()) or None
+            db.add(
+                Participant(
+                    weight_category_id=category.id,
+                    name=p.name,
+                    birth_year=p.year,
+                    team=p.team,
+                    other_info=other_text,
+                    actual_weight=p.actual_weight,
+                )
+            )
 
 
 def _get_or_create_age_category(
@@ -184,4 +303,16 @@ def _to_float(v: Any) -> float | None:
     try:
         return float(m.group().replace(",", "."))
     except ValueError:
+        return None
+
+
+def _to_decimal(v: Any) -> Decimal | None:
+    if v is None:
+        return None
+    match = re.search(r"-?\d+(?:[.,]\d+)?", str(v))
+    if not match:
+        return None
+    try:
+        return Decimal(match.group().replace(",", ".")).quantize(Decimal("0.01"))
+    except InvalidOperation:
         return None

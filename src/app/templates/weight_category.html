@@ -17,14 +17,20 @@
     {{ weight.name }}
 </div>
 <h1>Kategoria wagowa: {{ weight.name }}</h1>
+{% if weight.needs_review %}
+<div class="message warning">
+    Ta grupa wymaga sprawdzenia. Zweryfikuj faktyczne wagi i w razie potrzeby przenieś uczestników do innej kategorii.
+</div>
+{% endif %}
 
 <h2>Uczestnicy</h2>
 <form method="post" action="/weight-categories/{{ weight.id }}/participants/save">
-<table>
+<div class="table-scroll"><table>
     <thead>
         <tr>
-            <th>Name and Surname</th><th>Year of Birth</th><th>Team</th>
+            <th>Name and Surname</th><th>Year of Birth</th><th>Waga rzeczywista (kg)</th><th>Team</th>
             <th>Other Information</th>
+            {% if rights.can_update %}<th>Przenieś do kategorii</th>{% endif %}
             {% if rights.can_delete %}<th class="center">Akcje</th>{% endif %}
         </tr>
     </thead>
@@ -33,8 +39,20 @@
         <tr>
             <td><input name="name_{{ p.id }}" value="{{ p.name }}" {% if not rights.can_update %}readonly{% endif %}></td>
             <td><input name="year_{{ p.id }}" value="{{ p.birth_year or '' }}" {% if not rights.can_update %}readonly{% endif %}></td>
+            <td><input name="actual_weight_{{ p.id }}" type="number" step="0.01" value="{{ p.actual_weight if p.actual_weight is not none else '' }}" {% if not rights.can_update %}readonly{% endif %}></td>
             <td><input name="team_{{ p.id }}" value="{{ p.team or '' }}" {% if not rights.can_update %}readonly{% endif %}></td>
             <td><input name="other_{{ p.id }}" value="{{ p.other_info or '' }}" {% if not rights.can_update %}readonly{% endif %}></td>
+            {% if rights.can_update %}
+            <td>
+                <select name="category_{{ p.id }}">
+                    {% for target in move_targets %}
+                    <option value="{{ target.id }}" {% if target.id == weight.id %}selected{% endif %}>
+                        {{ target.age_category.name }} / {{ target.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </td>
+            {% endif %}
             {% if rights.can_delete %}
             <td class="center">
                 <button class="danger" type="submit"
@@ -46,7 +64,7 @@
         </tr>
         {% endfor %}
     </tbody>
-</table>
+</table></div>
 {% if rights.can_update %}
 <div class="export-bar">
     <button type="button" class="secondary" onclick="addParticipantRow()">+ Add new participant</button>
@@ -57,11 +75,16 @@
 
 {% if rights.can_update %}
 <h2>Losowanie (Shuffle)</h2>
-<button hx-post="/weight-categories/{{ weight.id }}/shuffle" hx-target="#shuffle-area">
-    🔀 Shuffle participants
-</button>
+<form hx-post="/weight-categories/{{ weight.id }}/shuffle" hx-target="#shuffle-area"
+      {% if rounds %}data-confirm="Ponowne losowanie zmieni numery używane w istniejących rundach. Kontynuować?"{% endif %}>
+    <button type="submit">🔀 Shuffle participants</button>
+</form>
 <div id="shuffle-area" class="card" style="margin-top:0.8rem;">
-    <p class="muted">Kliknij „Shuffle participants”, aby wylosować kolejność.</p>
+    {% if participants and participants | selectattr('order_index', 'ne', none) | list | length == participants | length %}
+        {% include "partials/shuffle_table.html" %}
+    {% else %}
+        <p class="muted">Kliknij „Shuffle participants”, aby wylosować kolejność.</p>
+    {% endif %}
 </div>
 {% endif %}
 
@@ -101,8 +124,10 @@ function addParticipantRow() {
     tr.innerHTML =
         '<td><input name="newname" placeholder="Imię i nazwisko"></td>' +
         '<td><input name="newyear"></td>' +
+        '<td><input name="newweight" type="number" step="0.01"></td>' +
         '<td><input name="newteam"></td>' +
         '<td><input name="newother"></td>' +
+        '<td></td>' +
         (del ? '<td class="center"><button type="button" class="secondary" onclick="this.closest(\'tr\').remove()">×</button></td>' : '');
     tbody.appendChild(tr);
 }
