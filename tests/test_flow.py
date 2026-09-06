@@ -1,17 +1,18 @@
 """End-to-end flow: competition -> upload -> categories -> round -> export."""
 import io
+import re
 
 from openpyxl import Workbook, load_workbook
 
 from tests.conftest import register
 
 
-def _sample_xlsx():
+def _sample_xlsx(count=7):
     wb = Workbook()
     wb.remove(wb.active)
     ws = wb.create_sheet("Kadeci")
     ws.append(["Name and Surname", "Year of Birth", "Weight category", "Team"])
-    for i in range(1, 8):  # 7 wrestlers in one weight class
+    for i in range(1, count + 1):
         ws.append([f"Zawodnik {i}", 2011, "45 kg", "UKS Test"])
     buf = io.BytesIO()
     wb.save(buf)
@@ -54,7 +55,6 @@ def test_full_flow(client):
 
     # find the age category id and open it
     page = client.get(f"/competitions/{comp_id}").text
-    import re
     age_id = int(re.search(r"/age-categories/(\d+)", page).group(1))
     r = client.get(f"/age-categories/{age_id}")
     assert "45 kg" in r.text
@@ -79,6 +79,12 @@ def test_full_flow(client):
     r = client.get(f"/rounds/{round_id}")
     assert r.status_code == 200
     assert "FINAŁ" in r.text
+    # Both group tables reuse the responsive scroll container instead of
+    # widening the entire page on small screens.
+    assert r.text.count('class="table-scroll round-table-scroll"') == 2
+    assert r.text.count('role="region"') >= 2
+    assert 'aria-label="Tabela walk grupy A"' in r.text
+    assert 'aria-label="Tabela walk grupy B"' in r.text
 
     # downloads
     r = client.get(f"/rounds/{round_id}/excel")
@@ -107,6 +113,39 @@ def test_permissions_block_stranger(client):
     register(other, "intruder", email="intruder@x.pl")
     r = other.get(f"/competitions/{comp_id}", follow_redirects=False)
     assert r.status_code == 403
+
+
+def test_single_elimination_tables_use_responsive_scroll_container(client):
+    _logged_in(client)
+    response = client.post(
+        "/competitions", data={"name": "Knockout"}, follow_redirects=False
+    )
+    comp_id = int(response.headers["location"].rstrip("/").split("/")[-1])
+    imported = client.post(
+        f"/competitions/{comp_id}/documents",
+        files={
+            "files": (
+                "kadeci.xlsx",
+                _sample_xlsx(12),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+    assert imported.status_code == 200
+
+    page = client.get(f"/competitions/{comp_id}").text
+    age_id = int(re.search(r"/age-categories/(\d+)", page).group(1))
+    age_page = client.get(f"/age-categories/{age_id}").text
+    weight_id = int(re.search(r"/weight-categories/(\d+)", age_page).group(1))
+    client.post(f"/weight-categories/{weight_id}/rounds", follow_redirects=False)
+    weight_page = client.get(f"/weight-categories/{weight_id}").text
+    round_id = int(re.search(r"/rounds/(\d+)", weight_page).group(1))
+
+    round_page = client.get(f"/rounds/{round_id}")
+    assert round_page.status_code == 200
+    assert round_page.text.count('class="table-scroll round-table-scroll"') == 2
+    assert 'aria-label="Drabinka pucharowa grupy A"' in round_page.text
+    assert 'aria-label="Drabinka pucharowa grupy B"' in round_page.text
 
 
 def test_document_preview_does_not_import_until_confirmation(client):

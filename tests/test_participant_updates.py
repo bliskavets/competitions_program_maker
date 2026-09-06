@@ -69,3 +69,29 @@ def test_saved_shuffle_is_visible_after_page_reload(client, db_session):
         )
     )
     assert [participant.id for participant in ordered] == ids
+
+
+def test_browser_form_order_is_saved_after_drag(client, db_session):
+    first, second, participants = _category_data(client, db_session)
+    client.post(f"/weight-categories/{first.id}/shuffle")
+    ids = [
+        participant.id
+        for participant in (participants[1], participants[2], participants[0])
+    ]
+
+    response = client.post(
+        f"/weight-categories/{first.id}/order",
+        data={"participant_id": [str(participant_id) for participant_id in ids]},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    db_session.expire_all()
+    ordered = list(
+        db_session.scalars(
+            select(Participant)
+            .where(Participant.weight_category_id == first.id)
+            .order_by(Participant.order_index)
+        )
+    )
+    assert [participant.id for participant in ordered] == ids

@@ -37,6 +37,8 @@
                 {% if g.name %}<h4>Grupa {{ g.name }}</h4>{% endif %}
 
                 {% if g.type == 'round_robin' %}
+                    <div class="table-scroll round-table-scroll" role="region"
+                         aria-label="Tabela walk{% if g.name %} grupy {{ g.name }}{% endif %}" tabindex="0">
                     <table>
                         <thead>
                             <tr>
@@ -71,6 +73,7 @@
                             {% endfor %}
                         </tbody>
                     </table>
+                    </div>
                     <p class="muted" style="font-size:0.82rem;">
                         System kołowy „każdy z każdym”. Każda kolumna W to jedna walka;
                         liczba w komórce oznacza numer (Lp.) przeciwnika. „wl” wskazuje rundę wolnego losu.
@@ -79,6 +82,8 @@
                 {% elif g.type == 'single_elim' %}
                     <p>Drabinka pucharowa — {{ g.num_participants }} uczestników
                        (rozmiar {{ g.bracket_size }}, wolne losy: {{ g.byes }}).</p>
+                    <div class="table-scroll round-table-scroll" role="region"
+                         aria-label="Drabinka pucharowa{% if g.name %} grupy {{ g.name }}{% endif %}" tabindex="0">
                     <table>
                         <thead>
                             <tr>
@@ -115,6 +120,7 @@
                         {% endfor %}
                         </tbody>
                     </table>
+                    </div>
                 {% endif %}
             {% endfor %}
 
