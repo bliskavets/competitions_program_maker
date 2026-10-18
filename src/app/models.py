@@ -149,6 +149,7 @@ class Participant(Base):
     )
     name: Mapped[str] = mapped_column(String(255))  # Name and Surname
     birth_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    gender: Mapped[str | None] = mapped_column(String(16), nullable=True)
     team: Mapped[str | None] = mapped_column(String(255), nullable=True)
     other_info: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Measured weight is deliberately separate from the assigned category.

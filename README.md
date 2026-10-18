@@ -15,7 +15,9 @@ i drukować je na arkuszach A4 (Excel / PDF). Interfejs jest po polsku.
   udostępnianie.
 - **Import uczestników** — wgrywanie wielu plików Excel; każdy arkusz to
   kategoria wiekowa. Wymagane kolumny: `Name and Surname`, `Year of Birth`,
-  `Weight category`, `Team` (pozostałe kolumny opcjonalne).
+  `Weight category`, `Team`; dla dzieci także `Gender` i faktyczna waga.
+  Dzieci są najpierw dzielone na dziewczęta/chłopców i przedziały wieku
+  3–5, 6–8, 9–11 itd., a dopiero potem grupowane według wagi.
 - **Kategorie** — wiekowe → wagowe → uczestnicy (edytowalna tabela).
 - **Losowanie i rundy** — tasowanie kolejności (drag-n-drop), tworzenie rund.
   Runda 1 generuje drabinkę dla aktualnych uczestników; kolejne rundy tworzy się
@@ -23,6 +25,8 @@ i drukować je na arkuszach A4 (Excel / PDF). Interfejs jest po polsku.
 - **Reguły drabinek** (zgodne z arkuszami WOZP / „krzyżówki SUMO”):
   - grupa ≤ 5 zawodników → system kołowy „każdy z każdym” (Berger), z polami
     `wl` (wolny los / odpoczynek) dla nieparzystej liczby,
+  - cykliczny remis co najmniej trzech zawodników → automatycznie wykrywana
+    dogrywka „każdy z każdym”, powtarzana aż do rozstrzygnięcia,
   - większe stawki → podział na **Grupę A** i **Grupę B**, finałowy crossover
     `A1–B2`, `B1–A2`, oraz dwa brązowe medale (repasaż, miejsca 1, 2, 3, 3).
 - **Eksport A4** — `Download as Excel/PDF` oraz wersje *do sędziowania*
@@ -66,6 +70,9 @@ python scripts/generate_sample_data.py   # zapisuje pliki .xlsx do data/
 
 W `data/` znajdują się gotowe pliki Excel z syntetycznymi (polskimi) danymi,
 które można wgrać przez „Dodaj dokumenty”.
+Plik `dane_testowe_plec_wiek_dogrywka.xlsx` zawiera cztery grupy dzieci
+sprawdzające podział według płci i wieku oraz instrukcję odtworzenia remisu
+cyklicznego i dogrywki.
 
 ## Testy
 

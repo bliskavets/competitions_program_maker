@@ -10,10 +10,21 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import Rights, ensure, require_user, rights_for
-from app.models import AgeCategory, Bout, Competition, Participant, Round, WeightCategory
+from app.models import (
+    AgeCategory,
+    Bout,
+    Competition,
+    Participant,
+    Round,
+    WeightCategory,
+)
 from app.routers.categories import load_weight
-from app.services.brackets import build_empty_bracket, build_initial_bracket, normalize_bracket
-from app.services.results import recalculate, set_winner, sync_bouts
+from app.services.brackets import (
+    build_empty_bracket,
+    build_initial_bracket,
+    normalize_bracket,
+)
+from app.services.results import create_tiebreak, recalculate, set_winner, sync_bouts
 from app.templating import templates
 
 router = APIRouter()
@@ -56,7 +67,13 @@ def _participant_map(weight: WeightCategory) -> dict[str, dict]:
 def prepare_round(db: Session, rnd: Round, weight: WeightCategory) -> dict:
     """Upgrade old JSON, recover participant ids and prepare online results."""
     if rnd.data is None:
-        return {"groups": [], "standings": [], "bouts": [], "complete": False}
+        return {
+            "groups": [],
+            "ties": [],
+            "standings": [],
+            "bouts": [],
+            "complete": False,
+        }
     data = normalize_bracket(rnd.data)
     participants_by_name: dict[str, list[Participant]] = {}
     for participant in weight.participants:
@@ -221,6 +238,30 @@ async def update_bout_winner(
         raise HTTPException(400, str(exc)) from exc
     recalculate(db, rnd)
     db.flush()
+    context = _round_context(request, rnd, weight, rights, db, saved=True)
+    db.commit()
+    return templates.TemplateResponse("partials/round_form.html", context)
+
+
+@router.post("/rounds/{round_id}/tiebreak", response_class=HTMLResponse)
+async def start_tiebreak(
+    request: Request,
+    loaded: tuple = Depends(load_round),
+    db: Session = Depends(get_db),
+):
+    rnd, weight, comp, rights = loaded
+    ensure(rights.can_update)
+    form = await request.form()
+    group_name = str(form.get("group_name") or "")
+    participant_ids = [
+        int(value)
+        for value in form.getlist("participant_id")
+        if str(value).isdigit()
+    ]
+    try:
+        create_tiebreak(db, rnd, group_name, participant_ids)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     context = _round_context(request, rnd, weight, rights, db, saved=True)
     db.commit()
     return templates.TemplateResponse("partials/round_form.html", context)

@@ -28,7 +28,7 @@
 <div class="table-scroll"><table>
     <thead>
         <tr>
-            <th>Name and Surname</th><th>Year of Birth</th><th>Waga rzeczywista (kg)</th><th>Team</th>
+            <th>Name and Surname</th><th>Year of Birth</th><th>Płeć</th><th>Waga rzeczywista (kg)</th><th>Team</th>
             <th>Other Information</th>
             {% if rights.can_update %}<th>Przenieś do kategorii</th>{% endif %}
             {% if rights.can_delete %}<th class="center">Akcje</th>{% endif %}
@@ -39,6 +39,13 @@
         <tr>
             <td><input name="name_{{ p.id }}" value="{{ p.name }}" {% if not rights.can_update %}readonly{% endif %}></td>
             <td><input name="year_{{ p.id }}" value="{{ p.birth_year or '' }}" {% if not rights.can_update %}readonly{% endif %}></td>
+            <td>
+                <select name="gender_{{ p.id }}" {% if not rights.can_update %}disabled{% endif %}>
+                    <option value="" {% if not p.gender %}selected{% endif %}>— do weryfikacji —</option>
+                    <option value="female" {% if p.gender == 'female' %}selected{% endif %}>Dziewczynka</option>
+                    <option value="male" {% if p.gender == 'male' %}selected{% endif %}>Chłopiec</option>
+                </select>
+            </td>
             <td><input name="actual_weight_{{ p.id }}" type="number" step="0.01" value="{{ p.actual_weight if p.actual_weight is not none else '' }}" {% if not rights.can_update %}readonly{% endif %}></td>
             <td><input name="team_{{ p.id }}" value="{{ p.team or '' }}" {% if not rights.can_update %}readonly{% endif %}></td>
             <td><input name="other_{{ p.id }}" value="{{ p.other_info or '' }}" {% if not rights.can_update %}readonly{% endif %}></td>
@@ -124,6 +131,7 @@ function addParticipantRow() {
     tr.innerHTML =
         '<td><input name="newname" placeholder="Imię i nazwisko"></td>' +
         '<td><input name="newyear"></td>' +
+        '<td><select name="newgender"><option value="">— do weryfikacji —</option><option value="female">Dziewczynka</option><option value="male">Chłopiec</option></select></td>' +
         '<td><input name="newweight" type="number" step="0.01"></td>' +
         '<td><input name="newteam"></td>' +
         '<td><input name="newother"></td>' +

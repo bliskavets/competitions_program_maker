@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Bout, Participant, Round
+from app.services.brackets import round_robin_rounds
 from app.services.child_grouping import is_children_category
 
 
@@ -31,8 +32,24 @@ def sync_bouts(db: Session, rnd: Round) -> None:
         for bout in db.scalars(select(Bout).where(Bout.round_id == rnd.id)).all()
     }
     wanted = {definition.key for definition in definitions}
+    valid_tiebreak_groups = {
+        group.get("name") or "S": {
+            row.get("participant_id")
+            for row in group.get("rows") or []
+            if row.get("participant_id") is not None
+        }
+        for group in (rnd.data or {}).get("groups") or []
+        if group.get("type") == "round_robin"
+    }
     for bout in existing.values():
-        if bout.key not in wanted:
+        tiebreak_players = {bout.player_a_id, bout.player_b_id} - {None}
+        valid_tiebreak = (
+            bout.stage == "tiebreak"
+            and bout.group_name in valid_tiebreak_groups
+            and len(tiebreak_players) == 2
+            and tiebreak_players <= valid_tiebreak_groups[bout.group_name]
+        )
+        if bout.key not in wanted and not valid_tiebreak:
             db.delete(bout)
 
     for definition in definitions:
@@ -111,12 +128,27 @@ def recalculate(db: Session, rnd: Round) -> dict[str, Any]:
                 {**row, "name": participants.get(row["participant_id"], "—")}
                 for row in group["ranking"]
             ],
+            "ties": [
+                {
+                    **tie,
+                    "participants": [
+                        {
+                            "id": participant_id,
+                            "name": participants.get(participant_id, "—"),
+                        }
+                        for participant_id in tie["participant_ids"]
+                    ],
+                }
+                for tie in group.get("ties", [])
+            ],
         }
         for group in groups
     ]
+    ties = [tie for group in public_groups for tie in group.get("ties", [])]
     db.flush()
     return {
         "groups": public_groups,
+        "ties": ties,
         "standings": [
             {**row, "name": participants.get(row["participant_id"], "—")}
             for row in standings
@@ -134,6 +166,71 @@ def set_winner(db: Session, bout: Bout, winner_id: int | None) -> None:
     bout.winner_id = winner_id
     bout.status = "complete" if winner_id is not None else "pending"
     db.flush()
+
+
+def create_tiebreak(
+    db: Session,
+    rnd: Round,
+    group_name: str,
+    participant_ids: list[int],
+) -> list[Bout]:
+    """Create one round-robin replay for an unresolved cyclic tie."""
+    participant_ids = list(dict.fromkeys(participant_ids))
+    state = recalculate(db, rnd)
+    requested = set(participant_ids)
+    allowed = next(
+        (
+            tie
+            for tie in state.get("ties", [])
+            if tie["group_name"] == group_name
+            and tie["status"] == "needed"
+            and set(tie["participant_ids"]) == requested
+        ),
+        None,
+    )
+    if allowed is None:
+        raise ValueError("Ta dogrywka nie jest już potrzebna lub lista zawodników się zmieniła")
+    if not 3 <= len(participant_ids) <= 5:
+        raise ValueError("Dogrywka kołowa wymaga od 3 do 5 zawodników")
+
+    existing = list(
+        db.scalars(
+            select(Bout)
+            .where(Bout.round_id == rnd.id)
+            .order_by(Bout.sequence, Bout.id)
+        )
+    )
+    series = max(
+        (
+            parsed[0]
+            for bout in existing
+            if bout.group_name == group_name
+            and (parsed := _tiebreak_key(bout.key)) is not None
+        ),
+        default=0,
+    ) + 1
+    sequence = max((bout.sequence for bout in existing), default=0)
+    created: list[Bout] = []
+    pair_number = 0
+    for pairs in round_robin_rounds(len(participant_ids)):
+        for a, b in pairs:
+            if a is None or b is None:
+                continue
+            pair_number += 1
+            sequence += 1
+            bout = Bout(
+                round_id=rnd.id,
+                key=f"G{group_name}-TB-{series}-{pair_number}",
+                stage="tiebreak",
+                group_name=group_name,
+                sequence=sequence,
+                player_a_id=participant_ids[a - 1],
+                player_b_id=participant_ids[b - 1],
+            )
+            db.add(bout)
+            created.append(bout)
+    db.flush()
+    return created
 
 
 def _definitions(data: dict[str, Any]) -> list[BoutDefinition]:
@@ -237,20 +334,42 @@ def _group_standings(data: dict[str, Any], bouts: list[Bout]) -> list[dict[str, 
         group_bouts = [bout for bout in bouts if bout.group_name == label]
         rows = group.get("rows") or []
         if group.get("type") == "round_robin":
+            base_bouts = [bout for bout in group_bouts if bout.stage == "group"]
+            tiebreak_bouts = [bout for bout in group_bouts if bout.stage == "tiebreak"]
             complete = (len(rows) <= 1) or (
-                bool(group_bouts) and all(bout.winner_id for bout in group_bouts)
+                bool(base_bouts) and all(bout.winner_id for bout in base_bouts)
             )
             wins = {row.get("participant_id"): 0 for row in rows if row.get("participant_id")}
-            for bout in group_bouts:
+            for bout in base_bouts:
                 if bout.winner_id in wins:
                     wins[bout.winner_id] += 1
             ordered = sorted(
                 [row for row in rows if row.get("participant_id")],
                 key=lambda row: (-wins[row["participant_id"]], row.get("lp") or 9999),
             )
-            ordered = _head_to_head_tiebreak(ordered, wins, group_bouts)
+            ties: list[dict[str, Any]] = []
+            if complete:
+                ordered, ties = _resolve_equal_wins(
+                    ordered,
+                    wins,
+                    base_bouts,
+                    tiebreak_bouts,
+                    label,
+                )
+                complete = not ties
+            unresolved_ids = {
+                participant_id
+                for tie in ties
+                for participant_id in tie["participant_ids"]
+            }
             ranking = [
-                {"participant_id": row["participant_id"], "wins": wins[row["participant_id"]], "place": pos}
+                {
+                    "participant_id": row["participant_id"],
+                    "wins": wins[row["participant_id"]],
+                    "place": (
+                        None if row["participant_id"] in unresolved_ids else pos
+                    ),
+                }
                 for pos, row in enumerate(ordered, start=1)
             ]
         else:
@@ -263,32 +382,159 @@ def _group_standings(data: dict[str, Any], bouts: list[Bout]) -> list[dict[str, 
                     {"participant_id": final_bout.winner_id, "wins": None, "place": 1},
                     {"participant_id": loser, "wins": None, "place": 2},
                 ]
-        result.append({"name": label, "complete": complete, "ranking": ranking})
+            ties = []
+        result.append(
+            {"name": label, "complete": complete, "ranking": ranking, "ties": ties}
+        )
     return result
 
 
-def _head_to_head_tiebreak(rows: list[dict], wins: dict[int, int], bouts: list[Bout]) -> list[dict]:
-    result = rows[:]
+def _resolve_equal_wins(
+    rows: list[dict],
+    wins: dict[int, int],
+    base_bouts: list[Bout],
+    tiebreak_bouts: list[Bout],
+    group_name: str,
+) -> tuple[list[dict], list[dict[str, Any]]]:
+    result: list[dict] = []
+    ties: list[dict[str, Any]] = []
     start = 0
-    while start < len(result):
+    while start < len(rows):
         end = start + 1
-        while end < len(result) and wins[result[end]["participant_id"]] == wins[result[start]["participant_id"]]:
+        while (
+            end < len(rows)
+            and wins[rows[end]["participant_id"]] == wins[rows[start]["participant_id"]]
+        ):
             end += 1
-        if end - start == 2:
-            first, second = result[start], result[start + 1]
-            duel = next(
-                (
-                    bout
-                    for bout in bouts
-                    if {bout.player_a_id, bout.player_b_id}
-                    == {first["participant_id"], second["participant_id"]}
-                ),
-                None,
+        bucket = rows[start:end]
+        if len(bucket) == 2:
+            bucket = _head_to_head(bucket, base_bouts)
+        elif len(bucket) >= 3:
+            bucket, unresolved = _resolve_tiebreak_bucket(
+                bucket, tiebreak_bouts, group_name
             )
-            if duel and duel.winner_id == second["participant_id"]:
-                result[start], result[start + 1] = second, first
+            ties.extend(unresolved)
+        result.extend(bucket)
         start = end
+    return result, ties
+
+
+def _resolve_tiebreak_bucket(
+    rows: list[dict],
+    bouts: list[Bout],
+    group_name: str,
+    *,
+    after_series: int = 0,
+) -> tuple[list[dict], list[dict[str, Any]]]:
+    participant_ids = [row["participant_id"] for row in rows]
+    requested = set(participant_ids)
+    series = _tiebreak_series(bouts)
+    matching = [
+        (number, series_bouts)
+        for number, series_bouts in sorted(series.items())
+        if number > after_series
+        and {
+            pid
+            for bout in series_bouts
+            for pid in (bout.player_a_id, bout.player_b_id)
+            if pid is not None
+        }
+        == requested
+    ]
+    if not matching:
+        return rows, [_tie_state(group_name, participant_ids, "needed")]
+
+    series_number, series_bouts = matching[-1]
+    if not all(bout.winner_id for bout in series_bouts):
+        return rows, [
+            _tie_state(group_name, participant_ids, "in_progress", series_number)
+        ]
+
+    series_wins = {participant_id: 0 for participant_id in participant_ids}
+    for bout in series_bouts:
+        if bout.winner_id in series_wins:
+            series_wins[bout.winner_id] += 1
+    ordered = sorted(
+        rows,
+        key=lambda row: (
+            -series_wins[row["participant_id"]],
+            participant_ids.index(row["participant_id"]),
+        ),
+    )
+    result: list[dict] = []
+    ties: list[dict[str, Any]] = []
+    start = 0
+    while start < len(ordered):
+        end = start + 1
+        while (
+            end < len(ordered)
+            and series_wins[ordered[end]["participant_id"]]
+            == series_wins[ordered[start]["participant_id"]]
+        ):
+            end += 1
+        bucket = ordered[start:end]
+        if len(bucket) == 2:
+            bucket = _head_to_head(bucket, series_bouts)
+        elif len(bucket) >= 3:
+            bucket, unresolved = _resolve_tiebreak_bucket(
+                bucket,
+                bouts,
+                group_name,
+                after_series=series_number,
+            )
+            ties.extend(unresolved)
+        result.extend(bucket)
+        start = end
+    return result, ties
+
+
+def _head_to_head(rows: list[dict], bouts: list[Bout]) -> list[dict]:
+    first, second = rows
+    duel = next(
+        (
+            bout
+            for bout in bouts
+            if {bout.player_a_id, bout.player_b_id}
+            == {first["participant_id"], second["participant_id"]}
+        ),
+        None,
+    )
+    if duel and duel.winner_id == second["participant_id"]:
+        return [second, first]
+    return rows
+
+
+def _tiebreak_key(key: str) -> tuple[int, int] | None:
+    parts = key.rsplit("-TB-", 1)
+    if len(parts) != 2:
+        return None
+    numbers = parts[1].split("-")
+    if len(numbers) != 2 or not all(number.isdigit() for number in numbers):
+        return None
+    return int(numbers[0]), int(numbers[1])
+
+
+def _tiebreak_series(bouts: list[Bout]) -> dict[int, list[Bout]]:
+    result: dict[int, list[Bout]] = {}
+    for bout in bouts:
+        parsed = _tiebreak_key(bout.key)
+        if parsed is not None:
+            result.setdefault(parsed[0], []).append(bout)
     return result
+
+
+def _tie_state(
+    group_name: str,
+    participant_ids: list[int],
+    status: str,
+    series: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "group_name": group_name,
+        "participant_ids": participant_ids,
+        "status": status,
+        "series": series,
+    }
 
 
 def _ranking_source(groups: dict[str, dict], source: str) -> int | None:

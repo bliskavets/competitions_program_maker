@@ -3,17 +3,25 @@ import io
 from openpyxl import load_workbook
 from sqlalchemy import select
 
-from app.models import AgeCategory, Bout, Competition, Participant, Round, User, WeightCategory
+from app.models import (
+    AgeCategory,
+    Bout,
+    Competition,
+    Participant,
+    Round,
+    User,
+    WeightCategory,
+)
 from tests.conftest import register
 
 
-def _online_round(client, db):
+def _online_round(client, db, count=3):
     register(client, "owner", "owner@example.pl")
     owner = db.scalar(select(User).where(User.login == "owner"))
     competition = Competition(name="Puchar", owner_id=owner.id)
     age = AgeCategory(name="Dzieci", competition=competition)
     weight = WeightCategory(name="Grupa 1", age_category=age)
-    for index in range(1, 4):
+    for index in range(1, count + 1):
         Participant(name=f"Zawodnik {index}", order_index=index, weight_category=weight)
     db.add(competition)
     db.commit()
@@ -70,3 +78,57 @@ def test_online_result_rejects_outsider(client, db_session):
     bout = db_session.scalar(select(Bout).where(Bout.round_id == rnd.id))
     response = client.post(f"/bouts/{bout.id}/winner", data={"winner_id": 999999})
     assert response.status_code == 400
+
+
+def test_online_cyclic_tie_can_start_replay_without_manual_names(client, db_session):
+    rnd = _online_round(client, db_session, count=4)
+    participants = list(
+        db_session.scalars(
+            select(Participant)
+            .where(Participant.weight_category_id == rnd.weight_category_id)
+            .order_by(Participant.order_index)
+        )
+    )
+    bouts = list(
+        db_session.scalars(
+            select(Bout).where(Bout.round_id == rnd.id, Bout.stage == "group")
+        )
+    )
+    leader, second, third, fourth = participants
+    outcomes = {
+        frozenset((leader.id, second.id)): leader.id,
+        frozenset((leader.id, third.id)): leader.id,
+        frozenset((leader.id, fourth.id)): leader.id,
+        frozenset((second.id, third.id)): second.id,
+        frozenset((third.id, fourth.id)): third.id,
+        frozenset((fourth.id, second.id)): fourth.id,
+    }
+    for bout in bouts:
+        response = client.post(
+            f"/bouts/{bout.id}/winner",
+            data={"winner_id": outcomes[frozenset((bout.player_a_id, bout.player_b_id))]},
+        )
+        assert response.status_code == 200
+
+    page = client.get(f"/rounds/{rnd.id}")
+    assert "Powtórz walki" in page.text
+    assert "Klasyfikacja końcowa" not in page.text
+
+    response = client.post(
+        f"/rounds/{rnd.id}/tiebreak",
+        data={
+            "group_name": "S",
+            "participant_id": [str(second.id), str(third.id), str(fourth.id)],
+        },
+    )
+    assert response.status_code == 200
+    assert "Dogrywka S" in response.text
+    replays = list(
+        db_session.scalars(
+            select(Bout).where(Bout.round_id == rnd.id, Bout.stage == "tiebreak")
+        )
+    )
+    assert len(replays) == 3
+    assert {replay.player_a_id for replay in replays} | {
+        replay.player_b_id for replay in replays
+    } == {second.id, third.id, fourth.id}

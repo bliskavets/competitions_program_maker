@@ -1,6 +1,9 @@
+from datetime import date
+
 from sqlalchemy import select
 
 from app.models import AgeCategory, Competition, Participant, User, WeightCategory
+from app.routers.participants import _refresh_auto_category
 from tests.conftest import register
 
 
@@ -28,6 +31,7 @@ def test_participant_can_be_weighed_and_moved_between_categories(client, db_sess
         data={
             f"name_{participant.id}": participant.name,
             f"year_{participant.id}": "2017",
+            f"gender_{participant.id}": "female",
             f"actual_weight_{participant.id}": "24,35",
             f"team_{participant.id}": "UKS",
             f"other_{participant.id}": "",
@@ -40,6 +44,7 @@ def test_participant_can_be_weighed_and_moved_between_categories(client, db_sess
     moved = db_session.get(Participant, participant.id)
     assert moved.weight_category_id == second.id
     assert float(moved.actual_weight) == 24.35
+    assert moved.gender == "female"
 
 
 def test_saved_shuffle_is_visible_after_page_reload(client, db_session):
@@ -95,3 +100,36 @@ def test_browser_form_order_is_saved_after_drag(client, db_session):
         )
     )
     assert [participant.id for participant in ordered] == ids
+
+
+def test_auto_group_refresh_preserves_number_and_flags_mixed_gender(db_session):
+    owner = User(login="refresh-owner", email="refresh@test.pl", password_hash="x")
+    competition = Competition(
+        name="Puchar", event_date=date(2026, 12, 1), owner=owner
+    )
+    age = AgeCategory(name="Dzieci", competition=competition)
+    category = WeightCategory(
+        name="Chłopcy · 6–8 lat · Grupa 2 · 20–21 kg",
+        age_category=age,
+        is_auto_grouped=True,
+    )
+    participants = [
+        Participant(
+            name=f"Dziecko {index}",
+            birth_year=2020,
+            gender="male",
+            actual_weight=20 + index / 10,
+            weight_category=category,
+        )
+        for index in range(4)
+    ]
+    db_session.add(competition)
+    db_session.flush()
+
+    _refresh_auto_category(db_session, category.id)
+    assert "Grupa 2" in category.name
+    assert category.needs_review is False
+
+    participants[0].gender = "female"
+    _refresh_auto_category(db_session, category.id)
+    assert category.needs_review is True

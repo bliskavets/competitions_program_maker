@@ -8,6 +8,8 @@ from app.services.child_grouping import group_children
 class Child:
     name: str
     actual_weight: Decimal | None
+    birth_year: int | None = 2020
+    gender: str | None = "male"
 
 
 def _children(count: int):
@@ -38,3 +40,48 @@ def test_missing_weight_is_never_dropped():
     assert len(groups) == 2
     assert groups[-1].members[0].name == "unknown"
     assert groups[-1].needs_review is True
+
+
+def test_children_are_separated_by_gender_before_weight_grouping():
+    children = [
+        Child(f"D{i}", Decimal("20") + Decimal(i) / 10, gender="female")
+        for i in range(4)
+    ] + [
+        Child(f"C{i}", Decimal("20") + Decimal(i) / 10, gender="male")
+        for i in range(4)
+    ]
+
+    groups = group_children(children, reference_year=2026)
+
+    assert [group.gender for group in groups] == ["female", "male"]
+    assert [len(group.members) for group in groups] == [4, 4]
+    assert groups[0].name.startswith("Dziewczęta · 6–8 lat")
+    assert groups[1].name.startswith("Chłopcy · 6–8 lat")
+
+
+def test_children_are_separated_into_fixed_three_year_age_bands():
+    children = [
+        Child("3 lata", Decimal("20"), birth_year=2023),
+        Child("5 lat", Decimal("20.5"), birth_year=2021),
+        Child("6 lat", Decimal("20.7"), birth_year=2020),
+        Child("8 lat", Decimal("21"), birth_year=2018),
+    ]
+
+    groups = group_children(children, reference_year=2026)
+
+    assert [[child.name for child in group.members] for group in groups] == [
+        ["3 lata", "5 lat"],
+        ["6 lat", "8 lat"],
+    ]
+    assert [(group.min_age, group.max_age) for group in groups] == [(3, 5), (6, 8)]
+
+
+def test_missing_demographics_create_an_explicit_review_group():
+    group = group_children(
+        [Child("Do sprawdzenia", Decimal("20"), birth_year=None, gender=None)],
+        reference_year=2026,
+    )[0]
+
+    assert group.needs_review is True
+    assert "Płeć do weryfikacji" in group.name
+    assert "wiek do weryfikacji" in group.name

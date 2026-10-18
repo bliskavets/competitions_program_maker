@@ -5,7 +5,7 @@ import io
 import re
 
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter, quote_sheetname
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.datavalidation import DataValidation
@@ -20,6 +20,7 @@ HEADERS = [
     "Actual weight",
     "Team",
     "Other Information",
+    "Gender",
 ]
 DEFAULT_AGES = ["Dzieci", "Młodzicy", "Kadeci", "Juniorzy"]
 
@@ -45,7 +46,7 @@ def render_import_template(competition: Competition) -> bytes:
         for cell in ws[1]:
             cell.font = Font(bold=True)
             cell.fill = PatternFill("solid", fgColor="E8E8E8")
-        widths = [28, 16, 20, 16, 24, 30]
+        widths = [28, 16, 20, 16, 24, 30, 18]
         for column, width in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(column)].width = width
 
@@ -88,11 +89,28 @@ def render_import_template(competition: Competition) -> bytes:
         ws.add_data_validation(measured)
         measured.add("D2:D500")
 
+        gender = DataValidation(
+            type="list",
+            formula1='"Dziewczynka,Chłopiec"',
+            allow_blank=True,
+        )
+        gender.error = "Wybierz Dziewczynka albo Chłopiec."
+        gender.errorTitle = "Nieznana płeć"
+        gender.showErrorMessage = True
+        ws.add_data_validation(gender)
+        gender.add("G2:G500")
+
     info = wb.create_sheet("Instrukcja", 0)
     info["A1"] = "Import uczestników"
     info["A1"].font = Font(bold=True, size=14)
     info["A3"] = "Każdy arkusz odpowiada kategorii wiekowej. Nie zmieniaj nazw nagłówków."
-    info["A4"] = "Dzieci: w kolumnie Weight category wpisz faktyczną wagę; grupy powstaną automatycznie."
+    info["A4"] = (
+        "Dzieci: podaj rok urodzenia, płeć i faktyczną wagę; system najpierw "
+        "oddzieli dziewczęta od chłopców oraz przedziały wieku 3–5, 6–8, 9–11 itd., "
+        "a następnie utworzy grupy według wagi."
+    )
+    info["A4"].alignment = Alignment(wrap_text=True, vertical="top")
+    info.row_dimensions[4].height = 45
     info["A5"] = "Pozostałe kategorie: wybierz kategorię wagową z listy, jeśli została skonfigurowana."
     info.column_dimensions["A"].width = 105
 

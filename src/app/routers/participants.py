@@ -1,20 +1,21 @@
 """Weight-category page: participant table, shuffle and draw ordering."""
 from __future__ import annotations
 
-import json
 import random
 import re
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import ensure, require_user
-from app.models import Participant, Round, WeightCategory
+from app.models import Participant, WeightCategory
 from app.routers.categories import load_weight
+from app.services.child_grouping import group_children, normalize_gender
 from app.templating import templates
 
 router = APIRouter()
@@ -79,6 +80,7 @@ async def save_participants(
             continue
         p.name = name.strip()
         p.birth_year = _int(form.get(f"year_{p.id}"))
+        p.gender = normalize_gender(form.get(f"gender_{p.id}"))
         p.actual_weight = _decimal(form.get(f"actual_weight_{p.id}"))
         p.team = (form.get(f"team_{p.id}") or "").strip() or None
         p.other_info = (form.get(f"other_{p.id}") or "").strip() or None
@@ -94,6 +96,7 @@ async def save_participants(
     # New rows: newname[] / newyear[] / newteam[] / newother[]
     new_names = form.getlist("newname")
     new_years = form.getlist("newyear")
+    new_genders = form.getlist("newgender")
     new_weights = form.getlist("newweight")
     new_teams = form.getlist("newteam")
     new_others = form.getlist("newother")
@@ -104,6 +107,9 @@ async def save_participants(
                     weight_category_id=weight.id,
                     name=nm.strip(),
                     birth_year=_int(new_years[i] if i < len(new_years) else None),
+                    gender=normalize_gender(
+                        new_genders[i] if i < len(new_genders) else None
+                    ),
                     actual_weight=_decimal(new_weights[i] if i < len(new_weights) else None),
                     team=(new_teams[i].strip() if i < len(new_teams) and new_teams[i] else None),
                     other_info=(new_others[i].strip() if i < len(new_others) and new_others[i] else None),
@@ -200,21 +206,35 @@ def _refresh_auto_category(db: Session, category_id: int) -> None:
     participants = list(
         db.scalars(select(Participant).where(Participant.weight_category_id == category_id))
     )
+    reference_year = (
+        category.age_category.competition.event_date or date.today()
+    ).year
+    suggested_groups = group_children(participants, reference_year=reference_year)
     weights = [participant.actual_weight for participant in participants]
     known = [value for value in weights if value is not None]
     category.needs_review = (
-        len(participants) < 4
-        or len(participants) > 5
-        or len(known) != len(participants)
-        or (bool(known) and max(known) - min(known) > Decimal("3.00"))
+        len(suggested_groups) != 1
+        or suggested_groups[0].needs_review
     )
     if known:
-        prefix_match = re.match(r"^(Grupa\s+\d+)", category.name or "")
-        prefix = prefix_match.group(1) if prefix_match else "Grupa"
-        lo, hi = _format_weight(min(known)), _format_weight(max(known))
-        category.name = f"{prefix} · {lo} kg" if lo == hi else f"{prefix} · {lo}–{hi} kg"
+        if len(suggested_groups) == 1:
+            current_number = re.search(r"Grupa\s+(\d+)", category.name or "")
+            category.name = re.sub(
+                r"Grupa\s+\d+",
+                f"Grupa {current_number.group(1)}" if current_number else "Grupa 1",
+                suggested_groups[0].name,
+                count=1,
+            )
+        else:
+            prefix_match = re.match(r"^(.*?Grupa\s+\d+)", category.name or "")
+            prefix = prefix_match.group(1) if prefix_match else "Grupa"
+            lo, hi = _format_weight(min(known)), _format_weight(max(known))
+            category.name = (
+                f"{prefix} · {lo} kg" if lo == hi else f"{prefix} · {lo}–{hi} kg"
+            )
         category.weight = float((min(known) + max(known)) / 2)
 
 
-def _format_weight(value: Decimal) -> str:
-    return format(value.quantize(Decimal("0.01")), "f").rstrip("0").rstrip(".").replace(".", ",")
+def _format_weight(value: Decimal | float) -> str:
+    number = Decimal(str(value)).quantize(Decimal("0.01"))
+    return format(number, "f").rstrip("0").rstrip(".").replace(".", ",")

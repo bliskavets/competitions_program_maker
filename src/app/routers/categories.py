@@ -1,6 +1,8 @@
 """Document upload, age categories and weight categories."""
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
@@ -105,7 +107,11 @@ async def upload_documents(
         previews = []
         for filename, data in file_data:
             try:
-                sheets = preview_workbook(data, allowed_categories=allowed)
+                sheets = preview_workbook(
+                    data,
+                    allowed_categories=allowed,
+                    reference_year=(comp.event_date or date.today()).year,
+                )
                 if not sheets:
                     errors.append(f"{filename}: nie znaleziono arkusza uczestników")
                 previews.append({"filename": filename, "sheets": sheets})

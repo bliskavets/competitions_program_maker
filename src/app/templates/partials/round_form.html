@@ -141,6 +141,7 @@
                 <div class="bout-row{% if bout.winner_id %} complete{% endif %}">
                     <span class="bout-number">
                         {% if bout.stage == 'group' %}{{ bout.group_name }} · W{{ bout.sequence }}
+                        {% elif bout.stage == 'tiebreak' %}Dogrywka {{ bout.group_name }} · W{{ bout.sequence }}
                         {% elif bout.stage == 'group_knockout' %}{{ bout.group_name }} · {{ bout.key.split('-')[-2:] | join(' ') }}
                         {% elif bout.stage == 'semifinal' %}Półfinał
                         {% else %}Finał{% endif %}
@@ -168,6 +169,28 @@
             {% endfor %}
             </div>
 
+            {% for tie in results.ties %}
+            <div class="message warning">
+                <strong>Remis w grupie {{ tie.group_name }}:</strong>
+                {{ tie.participants | map(attribute='name') | join(', ') }}.
+                {% if tie.status == 'needed' %}
+                    Potrzebna jest dogrywka „każdy z każdym” tylko między tymi zawodnikami.
+                    {% if rights.can_update %}
+                    <form hx-post="/rounds/{{ round.id }}/tiebreak" hx-target="#round-form-area"
+                          style="display:inline-block; margin-left:0.5rem;">
+                        <input type="hidden" name="group_name" value="{{ tie.group_name }}">
+                        {% for participant in tie.participants %}
+                        <input type="hidden" name="participant_id" value="{{ participant.id }}">
+                        {% endfor %}
+                        <button type="submit">Powtórz walki</button>
+                    </form>
+                    {% endif %}
+                {% else %}
+                    Dogrywka jest w toku — wskaż zwycięzców wszystkich jej walk.
+                {% endif %}
+            </div>
+            {% endfor %}
+
             {% for group in results.groups %}
             {% if group.ranking and group.ranking[0].wins is not none %}
             <h4>Tabela {% if group.name != 'S' %}grupy {{ group.name }}{% else %}bieżąca{% endif %}</h4>
@@ -175,7 +198,7 @@
                 <thead><tr><th>Lokata</th><th>Nazwisko i imię</th><th>PKT</th></tr></thead>
                 <tbody>
                 {% for row in group.ranking %}
-                    <tr><td class="center">{{ row.place }}</td><td>{{ row.name }}</td><td class="center">{{ row.wins }}</td></tr>
+                    <tr><td class="center">{{ row.place if row.place is not none else '—' }}</td><td>{{ row.name }}</td><td class="center">{{ row.wins }}</td></tr>
                 {% endfor %}
                 </tbody>
             </table>

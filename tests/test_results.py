@@ -3,9 +3,17 @@ from datetime import date
 import pytest
 from sqlalchemy import select
 
-from app.models import AgeCategory, Bout, Competition, Participant, Round, User, WeightCategory
+from app.models import (
+    AgeCategory,
+    Bout,
+    Competition,
+    Participant,
+    Round,
+    User,
+    WeightCategory,
+)
 from app.services.brackets import build_initial_bracket
-from app.services.results import recalculate, set_winner, sync_bouts
+from app.services.results import create_tiebreak, recalculate, set_winner, sync_bouts
 
 
 def _round(db, count: int) -> tuple[Round, list[Participant]]:
@@ -36,6 +44,15 @@ def _round(db, count: int) -> tuple[Round, list[Participant]]:
 
 def _bout(db, rnd: Round, key: str) -> Bout:
     return db.scalar(select(Bout).where(Bout.round_id == rnd.id, Bout.key == key))
+
+
+def _win_duel(db, bouts: list[Bout], first: Participant, second: Participant, winner: Participant):
+    bout = next(
+        bout
+        for bout in bouts
+        if {bout.player_a_id, bout.player_b_id} == {first.id, second.id}
+    )
+    set_winner(db, bout, winner.id)
 
 
 def test_round_robin_results_are_persisted_and_ranked(db_session):
@@ -69,6 +86,77 @@ def test_five_children_share_three_bronze_medals(db_session):
         set_winner(db_session, bout, min(bout.player_a_id, bout.player_b_id))
     result = recalculate(db_session, rnd)
     assert [row["place"] for row in result["standings"]] == [1, 2, 3, 3, 3]
+
+
+def test_cyclic_three_person_tie_creates_and_resolves_round_robin_replay(db_session):
+    rnd, participants = _round(db_session, 4)
+    sync_bouts(db_session, rnd)
+    bouts = list(
+        db_session.scalars(
+            select(Bout).where(Bout.round_id == rnd.id, Bout.stage == "group")
+        )
+    )
+    leader, second, third, fourth = participants
+    for opponent in (second, third, fourth):
+        _win_duel(db_session, bouts, leader, opponent, leader)
+    _win_duel(db_session, bouts, second, third, second)
+    _win_duel(db_session, bouts, third, fourth, third)
+    _win_duel(db_session, bouts, fourth, second, fourth)
+
+    tied = recalculate(db_session, rnd)
+    assert tied["complete"] is False
+    assert tied["standings"] == []
+    assert len(tied["ties"]) == 1
+    assert tied["ties"][0]["status"] == "needed"
+    assert set(tied["ties"][0]["participant_ids"]) == {second.id, third.id, fourth.id}
+    assert [row["place"] for row in tied["groups"][0]["ranking"]] == [1, None, None, None]
+
+    replay = create_tiebreak(
+        db_session, rnd, "S", tied["ties"][0]["participant_ids"]
+    )
+    assert len(replay) == 3
+    _win_duel(db_session, replay, second, third, second)
+    _win_duel(db_session, replay, second, fourth, second)
+    _win_duel(db_session, replay, third, fourth, third)
+
+    result = recalculate(db_session, rnd)
+    assert result["complete"] is True
+    assert [row["participant_id"] for row in result["standings"]] == [
+        leader.id,
+        second.id,
+        third.id,
+        fourth.id,
+    ]
+    assert [row["place"] for row in result["standings"]] == [1, 2, 3, 3]
+
+
+def test_repeated_cyclic_tie_offers_another_replay(db_session):
+    rnd, participants = _round(db_session, 3)
+    sync_bouts(db_session, rnd)
+    bouts = list(
+        db_session.scalars(
+            select(Bout).where(Bout.round_id == rnd.id, Bout.stage == "group")
+        )
+    )
+    first, second, third = participants
+    _win_duel(db_session, bouts, first, second, first)
+    _win_duel(db_session, bouts, second, third, second)
+    _win_duel(db_session, bouts, third, first, third)
+    state = recalculate(db_session, rnd)
+
+    replay = create_tiebreak(db_session, rnd, "S", state["ties"][0]["participant_ids"])
+    _win_duel(db_session, replay, first, second, first)
+    _win_duel(db_session, replay, second, third, second)
+    _win_duel(db_session, replay, third, first, third)
+    repeated = recalculate(db_session, rnd)
+
+    assert repeated["complete"] is False
+    assert repeated["ties"][0]["status"] == "needed"
+    second_replay = create_tiebreak(
+        db_session, rnd, "S", repeated["ties"][0]["participant_ids"]
+    )
+    assert len(second_replay) == 3
+    assert all("-TB-2-" in bout.key for bout in second_replay)
 
 
 def test_group_winners_advance_to_final_and_two_bronzes(db_session):

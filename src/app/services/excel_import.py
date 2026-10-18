@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import re
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -20,11 +21,16 @@ from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
 from app.models import AgeCategory, Competition, Participant, WeightCategory
-from app.services.child_grouping import group_children, is_children_category
+from app.services.child_grouping import (
+    group_children,
+    is_children_category,
+    normalize_gender,
+)
 
 REQUIRED = {
     "name": ("name and surname", "name", "nazwisko i imię", "imię i nazwisko"),
     "year": ("year of birth", "rok", "rok urodzenia"),
+    "gender": ("gender", "sex", "płeć", "plec"),
     "weight": ("weight category", "weight", "kategoria wagowa", "waga"),
     "actual_weight": ("actual weight", "measured weight", "waga rzeczywista", "waga faktyczna"),
     "team": ("team", "klub", "drużyna"),
@@ -52,6 +58,7 @@ class ParsedParticipant:
     row_number: int
     name: str
     year: int | None
+    gender: str | None
     weight: str
     actual_weight: Decimal | None
     team: str | None
@@ -97,6 +104,7 @@ def parse_workbook(data: bytes) -> list[ParsedSheet]:
                     row_number=row_number,
                     name=str(name).strip(),
                     year=_to_int(_cell(row, cols.get("year"))),
+                    gender=normalize_gender(_cell(row, cols.get("gender"))),
                     weight=str(weight).strip() if weight is not None else "",
                     actual_weight=_to_decimal(actual_weight),
                     team=_opt_str(_cell(row, cols.get("team"))),
@@ -113,6 +121,7 @@ def preview_workbook(
     data: bytes,
     *,
     allowed_categories: dict[str, set[str]] | None = None,
+    reference_year: int | None = None,
 ) -> list[dict[str, Any]]:
     """Describe the import without mutating the database."""
     preview: list[dict[str, Any]] = []
@@ -122,11 +131,21 @@ def preview_workbook(
         groups: list[dict[str, Any]] = []
         if is_children_category(sheet.age_category):
             for participant in sheet.participants:
+                if participant.year is None:
+                    issues.append(
+                        f"Wiersz {participant.row_number}: {participant.name} — brak lub nieprawidłowy rok urodzenia."
+                    )
+                if participant.gender is None:
+                    issues.append(
+                        f"Wiersz {participant.row_number}: {participant.name} — brak lub nierozpoznana płeć."
+                    )
                 if participant.actual_weight is None:
                     issues.append(
                         f"Wiersz {participant.row_number}: {participant.name} — brak lub nieprawidłowa waga."
                     )
-            for group in group_children(sheet.participants):
+            for group in group_children(
+                sheet.participants, reference_year=reference_year
+            ):
                 groups.append(
                     {
                         "name": group.name,
@@ -169,10 +188,13 @@ def import_workbook(db: Session, competition: Competition, data: bytes) -> int:
     """Parse and persist a workbook into the competition. Returns count added."""
     sheets = parse_workbook(data)
     added = 0
+    reference_year = (competition.event_date or date.today()).year
     for sheet in sheets:
         age = _get_or_create_age_category(db, competition, sheet.age_category)
         if is_children_category(sheet.age_category):
-            _import_children_sheet(db, age, sheet.participants)
+            _import_children_sheet(
+                db, age, sheet.participants, reference_year=reference_year
+            )
             added += len(sheet.participants)
             db.flush()
             continue
@@ -205,6 +227,7 @@ def import_workbook(db: Session, competition: Competition, data: bytes) -> int:
                     weight_category_id=weight.id,
                     name=p.name,
                     birth_year=p.year,
+                    gender=p.gender,
                     team=p.team,
                     other_info=other_text,
                     actual_weight=p.actual_weight,
@@ -217,10 +240,14 @@ def import_workbook(db: Session, competition: Competition, data: bytes) -> int:
 
 
 def _import_children_sheet(
-    db: Session, age: AgeCategory, participants: list[ParsedParticipant]
+    db: Session,
+    age: AgeCategory,
+    participants: list[ParsedParticipant],
+    *,
+    reference_year: int,
 ) -> None:
     """Persist one children sheet using the 4/5-person grouping policy."""
-    for group in group_children(participants):
+    for group in group_children(participants, reference_year=reference_year):
         category = WeightCategory(
             age_category_id=age.id,
             name=group.name,
@@ -237,6 +264,7 @@ def _import_children_sheet(
                     weight_category_id=category.id,
                     name=p.name,
                     birth_year=p.year,
+                    gender=p.gender,
                     team=p.team,
                     other_info=other_text,
                     actual_weight=p.actual_weight,

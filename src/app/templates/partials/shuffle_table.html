@@ -4,7 +4,7 @@
 <input type="hidden" name="order" id="order-field" value="{{ participants | map(attribute='id') | join(',') }}">
 <div class="table-scroll"><table>
     <thead>
-        <tr><th>Number</th><th>Name and Surname</th><th>Year of Birth</th><th>Team</th><th>Other Information</th></tr>
+        <tr><th>Number</th><th>Name and Surname</th><th>Year of Birth</th><th>Płeć</th><th>Team</th><th>Other Information</th></tr>
     </thead>
     <tbody id="draw-body">
         {% for p in participants %}
@@ -12,6 +12,7 @@
             <td class="center draw-number"><input type="hidden" name="participant_id" value="{{ p.id }}">{{ loop.index }}</td>
             <td>{{ p.name }}</td>
             <td>{{ p.birth_year or '' }}</td>
+            <td>{% if p.gender == 'female' %}Dziewczynka{% elif p.gender == 'male' %}Chłopiec{% else %}do weryfikacji{% endif %}</td>
             <td>{{ p.team or '' }}</td>
             <td>{{ p.other_info or '' }}</td>
         </tr>
