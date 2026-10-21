@@ -8,20 +8,22 @@ from __future__ import annotations
 import io
 import os
 from typing import Any
+from xml.sax.saxutils import escape
 
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import mm
 from reportlab.graphics.shapes import Drawing, Line, Rect, String
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
+    Paragraph,
     SimpleDocTemplate,
     Spacer,
     Table,
     TableStyle,
-    Paragraph,
 )
 
 # Register a Unicode font so Polish diacritics (ą, ę, ł, Ł, ś, ż, ...) render.
@@ -131,23 +133,15 @@ def render_results_pdf(standings: list[dict[str, Any]], *, title: str = "") -> b
     styles["Title"].fontName = FONT_BOLD
     story: list[Any] = []
     if title:
-        story.extend([Paragraph(title, styles["Title"]), Spacer(1, 5 * mm)])
+        story.extend([_result_paragraph(title, styles["Title"]), Spacer(1, 5 * mm)])
     data = [["M-ce", "Nazwisko i imię"]]
     data.extend([[row.get("place"), row.get("name", "")] for row in standings])
-    table = Table(data, colWidths=[25 * mm, doc.width - 25 * mm], repeatRows=1)
-    table.setStyle(
-        TableStyle(
-            [
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-                ("BACKGROUND", (0, 0), (-1, 0), HEADER_COLOR),
-                ("FONTNAME", (0, 0), (-1, -1), FONT),
-                ("FONTNAME", (0, 0), (-1, 0), FONT_BOLD),
-                ("ALIGN", (0, 0), (0, -1), "CENTER"),
-                ("FONTSIZE", (0, 0), (-1, -1), 11),
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ]
-        )
+    table = _results_table(
+        data,
+        widths=[25 * mm, doc.width - 25 * mm],
+        place_column=0,
+        font_size=11,
+        padding=6,
     )
     story.append(table)
     doc.build(story)
@@ -171,13 +165,60 @@ def render_competition_results_pdf(
     styles["Title"].fontName = FONT_BOLD
     story: list[Any] = []
     if title:
-        story.extend([Paragraph(title, styles["Title"]), Spacer(1, 4 * mm)])
+        story.extend([_result_paragraph(title, styles["Title"]), Spacer(1, 4 * mm)])
     data = [["Kategoria wiekowa", "Kategoria wagowa", "M-ce", "Nazwisko i imię"]]
     data.extend(
-        [[row.get("age"), row.get("weight"), row.get("place"), row.get("name", "")] for row in rows]
+        [row.get("age"), row.get("weight"), row.get("place"), row.get("name", "")]
+        for row in rows
     )
-    widths = [45 * mm, 55 * mm, 18 * mm, doc.width - 118 * mm]
-    table = Table(data, colWidths=widths, repeatRows=1)
+    widths = [45 * mm, 80 * mm, 18 * mm, doc.width - 143 * mm]
+    story.append(
+        _results_table(data, widths=widths, place_column=2, font_size=9, padding=4)
+    )
+    doc.build(story)
+    return buf.getvalue()
+
+
+def _result_paragraph(value: Any, style: ParagraphStyle) -> Paragraph:
+    """Keep user text literal while allowing ReportLab to wrap it to the cell."""
+    text = "" if value is None else str(value)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return Paragraph(escape(text).replace("\n", "<br/>"), style)
+
+
+def _results_table(
+    data: list[list[Any]],
+    *,
+    widths: list[float],
+    place_column: int,
+    font_size: int,
+    padding: int,
+) -> Table:
+    """Wrap every results cell; expand rows and split tall rows across pages."""
+    body = ParagraphStyle(
+        "ResultCell",
+        fontName=FONT,
+        fontSize=font_size,
+        leading=font_size * 1.3,
+        splitLongWords=1,
+    )
+    header = body.clone("ResultHeader", fontName=FONT_BOLD)
+    centered_body = body.clone("ResultPlace", alignment=TA_CENTER)
+    centered_header = header.clone("ResultPlaceHeader", alignment=TA_CENTER)
+    cells = []
+    for row_index, row in enumerate(data):
+        row_style = header if row_index == 0 else body
+        place_style = centered_header if row_index == 0 else centered_body
+        cells.append(
+            [
+                _result_paragraph(
+                    value,
+                    place_style if column == place_column else row_style,
+                )
+                for column, value in enumerate(row)
+            ]
+        )
+    table = Table(cells, colWidths=widths, repeatRows=1, splitInRow=1)
     table.setStyle(
         TableStyle(
             [
@@ -185,16 +226,13 @@ def render_competition_results_pdf(
                 ("BACKGROUND", (0, 0), (-1, 0), HEADER_COLOR),
                 ("FONTNAME", (0, 0), (-1, -1), FONT),
                 ("FONTNAME", (0, 0), (-1, 0), FONT_BOLD),
-                ("ALIGN", (2, 0), (2, -1), "CENTER"),
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), padding),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), padding),
             ]
         )
     )
-    story.append(table)
-    doc.build(story)
-    return buf.getvalue()
+    return table
 
 
 def _round_robin_table(group: dict[str, Any], avail: float, judging: bool) -> Table:
